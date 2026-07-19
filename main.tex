@@ -1,0 +1,38 @@
+% !TeX program = xelatex
+\documentclass[11pt,a4paper,oneside,openany]{ctexbook}
+
+\input{preamble}
+
+\title{
+  \textbf{A 股日频横截面多因子研究入门}\\[0.6em]
+  \large 从点时数据到含成本组合回测
+}
+\author{量化策略团队新人培训资料}
+\date{\today}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+\tableofcontents
+
+\mainmatter
+\include{chapters/ch01_hypothesis}
+\include{chapters/ch02_data_timing}
+\include{chapters/ch03_universe_labels}
+\include{chapters/ch04_factor_construction}
+\include{chapters/ch05_preprocessing}
+\include{chapters/ch06_single_factor}
+\include{chapters/ch07_robustness}
+\include{chapters/ch08_factor_combination}
+\include{chapters/ch09_portfolio}
+\include{chapters/ch10_backtest}
+
+\appendix
+\include{appendices/appA_glossary}
+\include{appendices/appB_checklists}
+\include{appendices/appC_templates}
+\include{appendices/appD_production}
+\include{appendices/appE_ai_usage}
+
+\end{document}

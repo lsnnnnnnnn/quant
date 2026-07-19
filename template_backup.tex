@@ -1,0 +1,356 @@
+% 历史模板备份，不是项目编译入口；正式入口为 main.tex。
+\documentclass[11pt,a4paper,oneside,openany]{ctexbook}
+
+% -------------------------------------------------
+% 页面与正文
+% -------------------------------------------------
+\usepackage[
+  top=2.3cm,
+  bottom=2.3cm,
+  left=2.45cm,
+  right=2.45cm,
+  headheight=15pt
+]{geometry}
+
+\usepackage{setspace}
+\setstretch{1.24}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.25em}
+
+% -------------------------------------------------
+% 颜色
+% -------------------------------------------------
+\usepackage{xcolor}
+
+\definecolor{SoftBlue}{RGB}{76,112,150}
+\definecolor{SoftGray}{RGB}{245,247,250}
+\definecolor{BlockBlue}{RGB}{220,232,245}
+\definecolor{BlockBlueDark}{RGB}{200,220,240}
+\definecolor{BaseGray}{RGB}{135,145,158}
+\definecolor{COPFBlue}{RGB}{60,102,170}
+\definecolor{WarmOrange}{RGB}{210,126,71}
+\definecolor{SoftGreen}{RGB}{83,145,126}
+\definecolor{DarkText}{RGB}{28,31,35}
+\definecolor{LightTan}{RGB}{247,243,236}
+
+\color{DarkText}
+
+% -------------------------------------------------
+% 数学、表格、图片
+% -------------------------------------------------
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}{>{\centering\arraybackslash}X}
+
+% -------------------------------------------------
+% 图形
+% -------------------------------------------------
+\usepackage{tikz}
+\usetikzlibrary{
+  arrows.meta,
+  positioning,
+  calc,
+  fit,
+  backgrounds,
+  shapes.geometric
+}
+
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\tikzset{
+  myarrow/.style={
+    -{Latex[length=2.4mm]},
+    line width=1.15pt,
+    draw=SoftBlue
+  },
+  softarrow/.style={
+    -{Latex[length=2.1mm]},
+    line width=0.9pt,
+    draw=gray!55
+  },
+  card/.style={
+    rounded corners=5pt,
+    draw=SoftBlue!38,
+    fill=SoftGray,
+    line width=0.8pt,
+    inner sep=6pt
+  },
+  bluecard/.style={
+    rounded corners=5pt,
+    draw=COPFBlue!55,
+    fill=BlockBlue,
+    line width=0.95pt,
+    inner sep=6pt
+  },
+  orangecard/.style={
+    rounded corners=5pt,
+    draw=WarmOrange!70!black,
+    fill=WarmOrange!8,
+    line width=0.95pt,
+    inner sep=6pt
+  },
+  greencard/.style={
+    rounded corners=5pt,
+    draw=SoftGreen!70!black,
+    fill=SoftGreen!8,
+    line width=0.95pt,
+    inner sep=6pt
+  }
+}
+
+% -------------------------------------------------
+% 提示框
+% -------------------------------------------------
+\usepackage[most]{tcolorbox}
+
+\tcbset{
+  lecturebox/.style={
+    enhanced,
+    breakable,
+    boxrule=0.8pt,
+    arc=3pt,
+    left=7pt,
+    right=7pt,
+    top=6pt,
+    bottom=6pt,
+    before skip=10pt,
+    after skip=10pt,
+    fonttitle=\bfseries
+  }
+}
+
+\newtcolorbox{principlebox}[1][]{
+  lecturebox,
+  colback=BlockBlue!68,
+  colframe=SoftBlue,
+  coltitle=DarkText,
+  title={通用原则},
+  #1
+}
+
+\newtcolorbox{teachingbox}[1][]{
+  lecturebox,
+  colback=SoftGray,
+  colframe=BaseGray!55,
+  coltitle=DarkText,
+  title={教学简化},
+  #1
+}
+
+\newtcolorbox{warningbox}[1][]{
+  lecturebox,
+  colback=WarmOrange!8,
+  colframe=WarmOrange,
+  coltitle=DarkText,
+  title={常见错误},
+  #1
+}
+
+\newtcolorbox{confirmbox}[1][]{
+  lecturebox,
+  colback=WarmOrange!6,
+  colframe=WarmOrange!85!black,
+  coltitle=DarkText,
+  title={需实际确认},
+  #1
+}
+
+\newtcolorbox{practicebox}[1][]{
+  lecturebox,
+  colback=SoftGreen!8,
+  colframe=SoftGreen,
+  coltitle=DarkText,
+  title={正确实践},
+  #1
+}
+
+\newtcolorbox{casebox}[1][]{
+  lecturebox,
+  colback=LightTan,
+  colframe=WarmOrange!55,
+  coltitle=DarkText,
+  title={贯穿案例},
+  #1
+}
+
+\newtcolorbox{outputbox}[1][]{
+  lecturebox,
+  colback=SoftGreen!7,
+  colframe=SoftGreen!85!black,
+  coltitle=DarkText,
+  title={本章产出},
+  #1
+}
+
+\newtcolorbox{quizbox}[1][]{
+  lecturebox,
+  colback=SoftGray,
+  colframe=SoftBlue!65,
+  coltitle=DarkText,
+  title={章节自测},
+  #1
+}
+
+% -------------------------------------------------
+% 代码
+% -------------------------------------------------
+\usepackage{listings}
+
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{SoftGray},
+  keywordstyle=\color{COPFBlue}\bfseries,
+  commentstyle=\color{SoftGreen!70!black},
+  stringstyle=\color{WarmOrange!85!black},
+  numbers=left,
+  numberstyle=\tiny\color{BaseGray},
+  numbersep=8pt,
+  frame=single,
+  rulecolor=\color{BaseGray!35},
+  breaklines=true,
+  showstringspaces=false,
+  tabsize=4,
+  columns=fullflexible,
+  captionpos=b
+}
+
+\lstset{style=pythonstyle}
+
+% -------------------------------------------------
+% 列表与图注
+% -------------------------------------------------
+\usepackage{enumitem}
+
+\setlist[itemize]{
+  leftmargin=2em,
+  itemsep=0.25em,
+  topsep=0.35em
+}
+
+\setlist[enumerate]{
+  leftmargin=2.2em,
+  itemsep=0.3em,
+  topsep=0.35em
+}
+
+\usepackage{caption}
+\captionsetup{
+  font=small,
+  labelfont=bf,
+  labelsep=quad
+}
+
+% -------------------------------------------------
+% 章节标题
+% -------------------------------------------------
+\ctexset{
+  chapter={
+    format=\raggedright\Huge\bfseries\color{DarkText},
+    nameformat=\color{SoftBlue},
+    numberformat=\color{SoftBlue},
+    titleformat=\color{DarkText},
+    beforeskip=-5pt,
+    afterskip=24pt
+  },
+  section={
+    format=\Large\bfseries\color{SoftBlue},
+    beforeskip=1.4ex,
+    afterskip=0.8ex
+  },
+  subsection={
+    format=\large\bfseries\color{DarkText},
+    beforeskip=1.2ex,
+    afterskip=0.55ex
+  }
+}
+
+\newcommand{\keyterm}[1]{\textbf{\color{SoftBlue}#1}}
+\newcommand{\riskterm}[1]{\textbf{\color{WarmOrange!90!black}#1}}
+\newcommand{\goodterm}[1]{\textbf{\color{SoftGreen!80!black}#1}}
+
+% -------------------------------------------------
+% 页眉页脚
+% -------------------------------------------------
+\usepackage{fancyhdr}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{BaseGray}\leftmark}
+\fancyhead[R]{\small\color{BaseGray}量化研究入门}
+\fancyfoot[C]{\small\color{BaseGray}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\headrule}{
+  \hbox to\headwidth{
+    \color{SoftBlue!45}\leaders\hrule height \headrulewidth\hfill
+  }
+}
+
+% -------------------------------------------------
+% 链接与引用
+% -------------------------------------------------
+\usepackage[
+  colorlinks=true,
+  linkcolor=SoftBlue,
+  urlcolor=SoftBlue,
+  citecolor=SoftGreen!70!black
+]{hyperref}
+
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+% -------------------------------------------------
+% 文档信息
+% -------------------------------------------------
+\title{
+  \textbf{A 股日频横截面多因子研究入门}\\[0.6em]
+  \large 从点时数据到含成本组合回测
+}
+\author{量化策略团队新人培训资料}
+\date{\today}
+
+\begin{document}
+
+\frontmatter
+
+\maketitle
+\tableofcontents
+
+\chapter*{阅读说明}
+\addcontentsline{toc}{chapter}{阅读说明}
+
+本讲义面向具备基础金融知识和 Python 数据分析能力，
+但尚未独立完成过多因子研究的新人。
+
+\mainmatter
+
+\include{chapters/ch01_hypothesis}
+\include{chapters/ch02_data_timing}
+\include{chapters/ch03_universe_labels}
+\include{chapters/ch04_factor_construction}
+\include{chapters/ch05_preprocessing}
+\include{chapters/ch06_single_factor}
+\include{chapters/ch07_robustness}
+\include{chapters/ch08_factor_combination}
+\include{chapters/ch09_portfolio}
+\include{chapters/ch10_backtest}
+
+\appendix
+
+\include{appendices/appA_glossary}
+\include{appendices/appB_checklists}
+\include{appendices/appC_templates}
+\include{appendices/appD_production_overview}
+\include{appendices/appE_ai_usage}
+
+\end{document}

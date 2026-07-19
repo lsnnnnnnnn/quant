@@ -1,8 +1,4 @@
-\documentclass[11pt,a4paper,oneside,openany]{ctexbook}
-
-% -------------------------------------------------
 % 页面与正文
-% -------------------------------------------------
 \usepackage[
   top=2.3cm,
   bottom=2.3cm,
@@ -10,18 +6,13 @@
   right=2.45cm,
   headheight=15pt
 ]{geometry}
-
 \usepackage{setspace}
 \setstretch{1.24}
-
 \setlength{\parindent}{2em}
 \setlength{\parskip}{0.25em}
 
-% -------------------------------------------------
 % 颜色
-% -------------------------------------------------
 \usepackage{xcolor}
-
 \definecolor{SoftBlue}{RGB}{76,112,150}
 \definecolor{SoftGray}{RGB}{245,247,250}
 \definecolor{BlockBlue}{RGB}{220,232,245}
@@ -32,28 +23,21 @@
 \definecolor{SoftGreen}{RGB}{83,145,126}
 \definecolor{DarkText}{RGB}{28,31,35}
 \definecolor{LightTan}{RGB}{247,243,236}
-
 \color{DarkText}
 
-% -------------------------------------------------
-% 数学、表格、图片
-% -------------------------------------------------
+% 数学、表格与图片
 \usepackage{amsmath,amssymb,mathtools}
 \usepackage{graphicx}
 \graphicspath{{figures/}}
-
 \usepackage{booktabs}
 \usepackage{tabularx}
 \usepackage{longtable}
 \usepackage{array}
 \usepackage{multirow}
-
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 \newcolumntype{C}{>{\centering\arraybackslash}X}
 
-% -------------------------------------------------
-% 图形
-% -------------------------------------------------
+% TikZ 与结构示意图
 \usepackage{tikz}
 \usetikzlibrary{
   arrows.meta,
@@ -63,10 +47,8 @@
   backgrounds,
   shapes.geometric
 }
-
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
-
 \tikzset{
   myarrow/.style={
     -{Latex[length=2.4mm]},
@@ -108,11 +90,8 @@
   }
 }
 
-% -------------------------------------------------
-% 提示框
-% -------------------------------------------------
+% 语义提示框
 \usepackage[most]{tcolorbox}
-
 \tcbset{
   lecturebox/.style={
     enhanced,
@@ -128,7 +107,6 @@
     fonttitle=\bfseries
   }
 }
-
 \newtcolorbox{principlebox}[1][]{
   lecturebox,
   colback=BlockBlue!68,
@@ -137,7 +115,6 @@
   title={通用原则},
   #1
 }
-
 \newtcolorbox{teachingbox}[1][]{
   lecturebox,
   colback=SoftGray,
@@ -146,7 +123,6 @@
   title={教学简化},
   #1
 }
-
 \newtcolorbox{warningbox}[1][]{
   lecturebox,
   colback=WarmOrange!8,
@@ -155,7 +131,6 @@
   title={常见错误},
   #1
 }
-
 \newtcolorbox{confirmbox}[1][]{
   lecturebox,
   colback=WarmOrange!6,
@@ -164,7 +139,6 @@
   title={需实际确认},
   #1
 }
-
 \newtcolorbox{practicebox}[1][]{
   lecturebox,
   colback=SoftGreen!8,
@@ -173,7 +147,6 @@
   title={正确实践},
   #1
 }
-
 \newtcolorbox{casebox}[1][]{
   lecturebox,
   colback=LightTan,
@@ -182,7 +155,6 @@
   title={贯穿案例},
   #1
 }
-
 \newtcolorbox{outputbox}[1][]{
   lecturebox,
   colback=SoftGreen!7,
@@ -191,7 +163,6 @@
   title={本章产出},
   #1
 }
-
 \newtcolorbox{quizbox}[1][]{
   lecturebox,
   colback=SoftGray,
@@ -201,11 +172,8 @@
   #1
 }
 
-% -------------------------------------------------
-% 代码
-% -------------------------------------------------
+% Python 代码
 \usepackage{listings}
-
 \lstdefinestyle{pythonstyle}{
   language=Python,
   basicstyle=\ttfamily\small,
@@ -224,26 +192,20 @@
   columns=fullflexible,
   captionpos=b
 }
-
 \lstset{style=pythonstyle}
 
-% -------------------------------------------------
 % 列表与图注
-% -------------------------------------------------
 \usepackage{enumitem}
-
 \setlist[itemize]{
   leftmargin=2em,
   itemsep=0.25em,
   topsep=0.35em
 }
-
 \setlist[enumerate]{
   leftmargin=2.2em,
   itemsep=0.3em,
   topsep=0.35em
 }
-
 \usepackage{caption}
 \captionsetup{
   font=small,
@@ -251,9 +213,7 @@
   labelsep=quad
 }
 
-% -------------------------------------------------
 % 章节标题
-% -------------------------------------------------
 \ctexset{
   chapter={
     format=\raggedright\Huge\bfseries\color{DarkText},
@@ -274,16 +234,12 @@
     afterskip=0.55ex
   }
 }
-
 \newcommand{\keyterm}[1]{\textbf{\color{SoftBlue}#1}}
 \newcommand{\riskterm}[1]{\textbf{\color{WarmOrange!90!black}#1}}
 \newcommand{\goodterm}[1]{\textbf{\color{SoftGreen!80!black}#1}}
 
-% -------------------------------------------------
 % 页眉页脚
-% -------------------------------------------------
 \usepackage{fancyhdr}
-
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[L]{\small\color{BaseGray}\leftmark}
@@ -296,60 +252,11 @@
   }
 }
 
-% -------------------------------------------------
-% 链接与引用
-% -------------------------------------------------
+% 链接与交叉引用
 \usepackage[
   colorlinks=true,
   linkcolor=SoftBlue,
   urlcolor=SoftBlue,
   citecolor=SoftGreen!70!black
 ]{hyperref}
-
 \usepackage[nameinlink,noabbrev]{cleveref}
-
-% -------------------------------------------------
-% 文档信息
-% -------------------------------------------------
-\title{
-  \textbf{A 股日频横截面多因子研究入门}\\[0.6em]
-  \large 从点时数据到含成本组合回测
-}
-\author{量化策略团队新人培训资料}
-\date{\today}
-
-\begin{document}
-
-\frontmatter
-
-\maketitle
-\tableofcontents
-
-\chapter*{阅读说明}
-\addcontentsline{toc}{chapter}{阅读说明}
-
-本讲义面向具备基础金融知识和 Python 数据分析能力，
-但尚未独立完成过多因子研究的新人。
-
-\mainmatter
-
-\include{chapters/ch01_hypothesis}
-\include{chapters/ch02_data_timing}
-\include{chapters/ch03_universe_labels}
-\include{chapters/ch04_factor_construction}
-\include{chapters/ch05_preprocessing}
-\include{chapters/ch06_single_factor}
-\include{chapters/ch07_robustness}
-\include{chapters/ch08_factor_combination}
-\include{chapters/ch09_portfolio}
-\include{chapters/ch10_backtest}
-
-\appendix
-
-\include{appendices/appA_glossary}
-\include{appendices/appB_checklists}
-\include{appendices/appC_templates}
-\include{appendices/appD_production_overview}
-\include{appendices/appE_ai_usage}
-
-\end{document}quant
