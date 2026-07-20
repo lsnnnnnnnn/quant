@@ -1,5 +1,493 @@
 \chapter{因子构造与实现核对}
+\label{ch:factor-construction}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+前两章已经冻结了信号日点时信息集与可参与比较的证券集合：时间可得性见 \cref{ch:data-timing}，股票池和未来收益标签边界见 \cref{ch:universe-labels}。本章只在这些已经冻结的输入上完成三个教学因子的\keyterm{原始构造与实现核对}：中期动量、账面市值比价值和 ROE 类质量。这里的目标不是证明因子有效，而是证明“公式写的”和“程序算的”是同一件事。
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 把经济假设写成公式、数据依赖、时间窗口、方向和有效条件；
+  \item 区分沿单只证券历史展开的时间序列运算与同一信号日的横截面运算；
+  \item 保证每个输入在信号截止前已经可得，且不访问未来标签或成交状态；
+  \item 同时输出原始因子值、有效性标记、无效原因和输入最新可得日；
+  \item 用单元测试与匿名证券人工手算核对实现；
+  \item 用统一 schema、定义卡和版本号建立可复用、可审计的因子接口。
+\end{enumerate}
+
+\begin{principlebox}
+[通用原则] 因子实现正确性的最低标准不是“结果看起来合理”，而是任一 \texttt{security\_id} 与 \texttt{signal\_date} 的输出都能追溯到已冻结输入、参数、公式、有效性判断和代码版本。未来收益不得用于选窗口、改方向或修补缺失值。
+\end{principlebox}
+
+本章不进行去极值、缩尾、排名、标准化、行业或市值中性化，也不计算 IC、分组收益或组合回测。这些步骤分别属于第 5 章之后的预处理、评价和组合流程。
+
+\section{从经济假设到可计算因子}
+
+经济假设通常以自然语言开始，例如“过去一段较长时期表现相对强的证券可能延续这一状态”“账面权益相对市值较高的证券可能具有更高价值暴露”“持续盈利且权益基础稳健的公司可能具有更高质量”。这些都是待验证假设，不是已经成立的事实。要把它们变成可计算因子，至少要回答五个问题：测量对象是什么，使用哪些输入，输入何时可得，参数如何预先固定，以及什么情况下拒绝给出数值。
+
+一个完整转换过程应先登记研究假设和预期方向，再锁定点时数据、参数与有效条件，然后计算原始值，最后输出质量状态。若先看未来表现再决定窗口或翻转方向，程序即使没有显式连接标签表，也已经把未来结果带入了因子定义。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=3mm,
+    every node/.style={font=\small},
+    step/.style={bluecard, text width=2.25cm, minimum height=1.35cm, align=center},
+    check/.style={greencard, text width=2.35cm, minimum height=1.35cm, align=center}
+  ]
+    \node[step] (hypothesis) {经济假设\\与预期方向};
+    \node[step, right=of hypothesis] (data) {点时数据\\参数与窗口};
+    \node[step, right=of data] (raw) {原始因子值\\\texttt{raw\_value}};
+    \node[check, right=of raw] (valid) {有效性检查\\原因与版本};
+    \node[step, right=of valid] (next) {第 5 章\\后续预处理};
+
+    \draw[myarrow] (hypothesis) -- (data);
+    \draw[myarrow] (data) -- (raw);
+    \draw[myarrow] (raw) -- (valid);
+    \draw[myarrow] (valid) -- (next);
+  \end{tikzpicture}
+  \caption{从研究假设到原始因子输出的流程（结构示意，非实证结果）}
+  \label{fig:ch04-factor-pipeline}
+\end{figure}
+
+\cref{fig:ch04-factor-pipeline} 中“有效性检查”不是事后清洗。它与公式一起定义原始因子：历史不足、点时记录不可得或分母不合法时，程序应拒绝生成看似精确的数值，而不是等到下一章再处理。
+
+\section{原始因子、处理后因子和交易信号的区别}
+
+\keyterm{原始因子}是按定义卡公式直接计算、尚未经过第 5 章截面处理的数值，例如一个价格比值减一或两个点时会计量的比值。\keyterm{处理后因子}是在原始值及其有效状态基础上，经预先登记的缩尾、变换、标准化或暴露控制得到的可比较数值。\keyterm{交易信号}还要结合因子方向、多因子合成、股票池、组合约束与持仓状态，才能转化为目标权重或订单。
+
+三者不能使用同一列反复覆盖。否则研究者无法判断一个极端值来自原公式、预处理还是组合约束，也无法重现某次版本变化。本章的 \texttt{raw\_value} 只保存原始值；其数值大小不代表已可直接比较、交易或用于组合优化。
+
+\begin{warningbox}
+把截面排名写回原始因子列，会永久丢失公式输出；把缺失值填零后再排名，会把“未知”伪装成“中性”；把目标持仓称为因子，则会混淆预测、组合和执行三个层次。
+\end{warningbox}
+
+\section{时间序列运算与横截面运算}
+
+时间序列运算沿同一证券的日期轴移动，例如计算历史价格端点、滞后值和滚动观测数；横截面运算则在同一信号日比较不同证券，例如排名、标准化或行业内变换。动量的端点选择属于时间序列运算，账面市值比和 ROE 的点时比值也是逐证券计算。本章尚不进行横截面排名或标准化。
+
+\cref{tab:ch04-ts-cs-comparison} 给出两类运算的防错边界。最危险的实现错误是排序或分组键不完整：未按证券分组的 \texttt{shift} 会把上一只证券的历史接到下一只证券，未按信号日分组的排名则会把不同日期混在一起。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{时间序列运算与横截面运算对比}
+  \label{tab:ch04-ts-cs-comparison}
+  \begin{tabularx}{\textwidth}{p{2.6cm} Y Y Y}
+    \toprule
+    比较项 & 时间序列运算 & 横截面运算 & 本章边界 \\
+    \midrule
+    核心问题 & 同一证券过去发生了什么 & 同一时点不同证券如何比较 & 只输出逐证券原始值 \\
+    分组键 & \texttt{security\_id} & \texttt{signal\_date}，必要时加行业等分组 & 不执行排名与标准化 \\
+    排序键 & 证券内按观察日升序 & 信号日内按稳定证券标识确定性排序 & 排序必须显式 \\
+    典型操作 & \texttt{shift}、\texttt{rolling}、历史端点 & 排名、分位数、截面标准化 & 动量使用证券内历史 \\
+    泄漏风险 & 窗口跨证券或包含信号日之后数据 & 混入未来日期或全样本统计量 & 两类错误均应断言失败 \\
+    输出检查 & 首尾日期、观测数、窗口完整性 & 每日样本量、并列值和缺失处理 & 保留原值和有效原因 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{因子定义卡与统一输出接口}
+
+定义卡是研究假设与代码之间的合同。它应在查看后续表现之前冻结，并随版本管理。\cref{tab:ch04-definition-cards} 汇总本章三个教学因子的定义卡；表中的预期方向是待检验假设，不是实证结论。
+
+{
+\setlength{\tabcolsep}{3pt}
+\footnotesize
+\begin{longtable}{p{2.05cm} p{4.1cm} p{4.1cm} p{4.1cm}}
+\caption{三个教学因子的综合定义卡}\label{tab:ch04-definition-cards}\\
+\toprule
+字段 & 中期动量 & 账面市值比价值 & ROE 类质量 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 中期动量 & 账面市值比价值 & ROE 类质量 \\
+\midrule
+\endhead
+因子名称 & \texttt{momentum\_medium} & \texttt{book\_to\_price} & \texttt{roe\_quality\_ttm} \\
+研究假设 & 中期价格状态可能具有延续性 & 账面权益相对市值较高可能对应价值暴露 & 盈利相对权益基础较高可能对应质量暴露 \\
+经济逻辑 & 用较长历史区间、跳过短期窗口描述中期状态 & 比较点时账面权益与同一信号时点市值 & 比较点时 TTM 利润与平均点时权益 \\
+数学公式 & 见 \cref{eq:ch04-momentum} & 见 \cref{eq:ch04-book-to-price} & 见 \cref{eq:ch04-roe,eq:ch04-average-equity} \\
+预期方向 & 原始值越高，教学假设方向越正 & 原始值越高，教学假设方向越正 & 原始值越高，教学假设方向越正 \\
+输入数据 & 信号截止前价格或总收益序列 & 点时账面权益、信号时点市值 & 点时 TTM 利润、当期与历史权益 \\
+可得时间 & 两端点及窗口状态均不晚于 \(t\) & 财务可得日与市值观察日均不晚于 \(t\) & 所有 TTM 组成项和权益记录均不晚于 \(t\) \\
+参数 & \(L_{\mathrm{lookback}}\)、\(L_{\mathrm{skip}}\)、最小观测数 & 权益与市值口径、单位规则、分母阈值 & TTM 规则、平均权益规则、分母阈值 \\
+最小历史长度 & 覆盖长回看端点并满足最小观测数 & 至少一条有效点时权益与同日市值 & 完整 TTM 组成项及两期可比权益 \\
+有效条件 & 同证券、端点存在、历史充足、无未来输入 & 分子分母可得、单位一致、分母合法 & TTM 完整、平均权益合法、历史记录可得 \\
+无效原因 & 历史不足、端点缺失、未来输入、公司行动状态待确认 & 财务缺失、非正权益、非法市值、单位不一致 & TTM 不完整、权益缺失、分母非正或过小 \\
+输出频率 & 每个周度信号日逐证券一条 & 每个周度信号日逐证券一条 & 每个周度信号日逐证券一条 \\
+版本 & 公式、参数与数据口径共同组成版本 & 公式、权益与市值口径共同组成版本 & 公式、TTM 与权益口径共同组成版本 \\
+人工核对 & 检查两端点、观测数并手算价格比 & 追溯点时权益和市值后手算比值 & 展开 TTM 组成与平均权益后手算 \\
+\bottomrule
+\end{longtable}
+}
+
+统一输出接口应让三个因子可以纵向拼接，同时保留各自的无效原因。\cref{tab:ch04-output-schema} 是教学基线 schema；实际存储类型由项目实现决定，但字段语义不应随因子变化。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{统一原始因子输出 schema}
+  \label{tab:ch04-output-schema}
+  \begin{tabularx}{\textwidth}{p{3.15cm} p{2.25cm} Y Y}
+    \toprule
+    字段 & 教学类型 & 含义 & 最小约束 \\
+    \midrule
+    \texttt{security\_id} & 标识 & 稳定证券主键 & 不使用展示代码代替稳定主键 \\
+    \texttt{signal\_date} & 日期 & 因子所属信号日 & 必须属于冻结调仓日程 \\
+    \texttt{factor\_name} & 字符串 & 定义卡中的固定名称 & 不得因后续表现改名或翻向 \\
+    \texttt{raw\_value} & 数值或缺失 & 未经第 5 章处理的原始值 & 无效时保持缺失，不填零 \\
+    \texttt{is\_valid} & 布尔 & 是否满足定义卡有效条件 & 与无效原因分开保存 \\
+    \texttt{invalid\_reason} & 枚举或列表 & 无法给出原始值的原因 & 有效时为空；优先级需确定 \\
+    \texttt{risk\_reason} & 枚举或列表 & 数值可算但需复核的风险 & 可与有效值同时存在 \\
+    \texttt{input\_latest\_date} & 日期 & 本次实际使用输入的最晚可得日 & 必须不晚于信号日 \\
+    \texttt{factor\_version} & 字符串 & 公式和实现版本 & 版本变更不得覆盖历史输出 \\
+    \texttt{config\_version} & 字符串 & 参数与数据口径配置版本 & 可追溯到冻结配置 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+同一 \texttt{security\_id}、\texttt{signal\_date}、\texttt{factor\_name}、\texttt{factor\_version} 和 \texttt{config\_version} 组合必须唯一。若多项无效条件同时命中，可以保存原因列表，也可以按定义卡规定的确定性优先级选择主原因，但不能由代码执行顺序偶然决定。
+
+\section{中期动量因子的定义与实现}
+
+中期动量用较早长回看端点到较近短期跳过端点之间的价格变化描述证券的中期状态。令 \(t\) 为信号日，\(L_{\mathrm{lookback}}\) 为长回看长度，\(L_{\mathrm{skip}}\) 为短期跳过长度，且
+\(L_{\mathrm{lookback}}>L_{\mathrm{skip}}\geq 0\)。教学基线定义为
+
+\begin{equation}
+  \mathrm{MOM}_{i,t}
+  =
+  \frac{
+    P^{\mathrm{adj}}_{i,\,t-L_{\mathrm{skip}}}
+  }{
+    P^{\mathrm{adj}}_{i,\,t-L_{\mathrm{lookback}}}
+  }
+  - 1 .
+  \label{eq:ch04-momentum}
+\end{equation}
+
+其中 \(P^{\mathrm{adj}}_{i,s}\) 表示证券 \(i\) 在历史端点 \(s\) 的一致口径价格或总收益代理。两个 \(L\) 应按冻结交易日历或配置中的观察索引解释，不能把自然日与交易日观测混用。实现时先按 \texttt{security\_id} 与观察日排序，再在每只证券内部定位两个端点；任何 \texttt{shift} 或 \texttt{rolling} 都不得跨证券。
+
+\begin{teachingbox}
+[教学简化] 候选基线可描述为“约 12 个月回看、跳过最近约 1 个月”。它只是预注册教学设定，不是行业唯一标准，也不是经本项目回测挑出的最优窗口。实际 \(L_{\mathrm{lookback}}\)、\(L_{\mathrm{skip}}\) 和最小观测数应在查看后续标签表现前写入配置。
+\end{teachingbox}
+
+只要端点之一缺失、有效历史不足或窗口中出现晚于信号截止的记录，就不应计算原始值。停牌可能导致观测间隔异常，上市历史不足会使长端点不存在，公司行动可能改变价格序列的可比性；这些状态都应进入有效性证据而不是静默前填。
+
+\begin{confirmbox}
+[需实际确认] \(P^{\mathrm{adj}}\) 使用何种复权价格或总收益口径、公司行动何时可得、停牌期间如何定义端点、允许的最大日期偏移及最小观测数，都依赖数据源和研究配置。不得凭供应商字段名或最终回测表现决定这些规则。
+\end{confirmbox}
+
+\section{账面市值比价值因子的定义与实现}
+
+账面市值比把信号日已经可得的账面权益与同一时点的市值放在同一尺度上比较。令
+\(\mathrm{BookEquity}^{\mathrm{PIT}}_{i,t}\) 为按 \cref{ch:data-timing} 生成的点时账面权益快照，\(\mathrm{MarketCap}_{i,t}\) 为与信号时点一致的市值，则
+
+\begin{equation}
+  \mathrm{BP}_{i,t}
+  =
+  \frac{
+    \mathrm{BookEquity}^{\mathrm{PIT}}_{i,t}
+  }{
+    \mathrm{MarketCap}_{i,t}
+  } .
+  \label{eq:ch04-book-to-price}
+\end{equation}
+
+财务分子的报告期可以早于 \(t\)，但其可得日必须不晚于 \(t\)；市值分母也必须对应信号时点，而不是未来日期或另一套未说明的频率。计算前要验证两者币种和数量级一致。若单位不一致，即使除法可以执行，结果也没有可解释性。
+
+本章教学基线把缺失或非正账面权益、缺失或非正市值、极端小分母以及单位不一致列为显式无效状态。这里的“无效”表示不按当前定义卡生成 BP 原始值，不表示该证券从历史股票池中消失，更不允许用零替代未知。
+
+\begin{confirmbox}
+[需实际确认] 账面权益采用何种会计口径，市值采用总市值、流通市值或其他定义，币种与单位如何映射，非正权益和小分母阈值如何配置，均由研究目标、数据源和团队口径决定。本章不把任何一种选择写成唯一标准。
+\end{confirmbox}
+
+\section{ROE 类质量因子的定义与实现}
+
+ROE 类质量因子用一段期间利润与支持该利润的平均权益比较。令
+\(\mathrm{NetIncome}^{\mathrm{TTM,PIT}}_{i,t}\) 表示在信号日已经完整可得的 TTM 利润，令
+\(\mathrm{AverageBookEquity}^{\mathrm{PIT}}_{i,t}\) 表示平均点时权益，教学基线为
+
+\begin{equation}
+  \mathrm{ROE}^{\mathrm{TTM}}_{i,t}
+  =
+  \frac{
+    \mathrm{NetIncome}^{\mathrm{TTM,PIT}}_{i,t}
+  }{
+    \mathrm{AverageBookEquity}^{\mathrm{PIT}}_{i,t}
+  } ,
+  \label{eq:ch04-roe}
+\end{equation}
+
+其中平均权益可用一般形式表示为
+
+\begin{equation}
+  \mathrm{AverageBookEquity}^{\mathrm{PIT}}_{i,t}
+  =
+  \frac{
+    \mathrm{BookEquity}^{\mathrm{PIT}}_{i,t}
+    +
+    \mathrm{BookEquity}^{\mathrm{PIT}}_{i,t-1y}
+  }{2}.
+  \label{eq:ch04-average-equity}
+\end{equation}
+
+式中的 \(t-1y\) 表示定义卡要求的可比历史权益期，不意味着从信号日机械减去一个自然年后直接取值。两期权益记录及构成 TTM 利润的每个组成项，都必须在 \(t\) 时点已经可得。不能用后来修订的全年利润替换历史当时可见的组成，也不能在 TTM 项缺失时从未来报告补齐。
+
+负利润可以产生负的 ROE 原始值，并不自动等于数学无效；但平均权益为零、负值或低于配置阈值时，教学基线拒绝计算。若数值可算但一次性项目可能显著影响解释，应保留 \texttt{risk\_reason}，而不是在本章擅自调整利润或缩尾。
+
+\begin{confirmbox}
+[需实际确认] 累计年初至今数据如何转换为单季或 TTM、归母利润或其他净利润口径、归母权益或其他权益口径、历史可比期、修订版本、一次性项目识别和小分母阈值，都依赖实际财务数据结构与会计口径。
+\end{confirmbox}
+
+\section{三个因子的数据依赖与点时边界}
+
+三个因子使用不同数据，但共享同一条时间约束：实际参与计算的最晚可得日不能晚于信号日 \(t\)。\cref{tab:ch04-data-dependencies} 只列概念字段，不假设任何供应商字段名。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{三个因子的数据依赖与点时边界}
+  \label{tab:ch04-data-dependencies}
+  \begin{tabularx}{\textwidth}{p{2.55cm} p{3.4cm} p{3.15cm} Y}
+    \toprule
+    因子 & 概念输入 & 截止要求 & 关键核对 \\
+    \midrule
+    中期动量 & 同证券历史价格或总收益序列、交易日历 & 两端点和窗口记录均不晚于 \(t\) & 分组、排序、端点、观测数、公司行动状态 \\
+    账面市值比 & 点时账面权益、信号时点市值、单位元数据 & 财务可得日和市值观察日均不晚于 \(t\) & 点时版本、币种、数量级、非正值和小分母 \\
+    ROE 类质量 & 点时 TTM 利润组成、当期及历史权益、单位元数据 & 每个利润组成项与两期权益均不晚于 \(t\) & TTM 完整性、历史可比期、修订、平均权益 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+因子程序的允许输入应来自第 2 章冻结的点时快照与第 3 章冻结的
+\(\mathcal{U}^{\mathrm{signal}}_t\)。\texttt{future\_return}、\texttt{execution\_status}、订单成交结果和实际持仓都属于未来或后续层，不得出现在因子计算函数的数据依赖中。即使只是“方便过滤”，访问这些表也会破坏职责边界。
+
+\section{有效值规则、无效原因和缺失状态}
+
+\texttt{is\_valid} 回答“当前定义是否允许使用该数值”，\texttt{invalid\_reason} 回答“为什么不允许”，\texttt{raw\_value} 则只在有效时保存公式输出。三列必须分开：缺失原始值不等于实现错误，布尔值也不能替代原因证据。
+
+建议的教学原因码包括：
+
+\begin{itemize}
+  \item 动量：\texttt{MOM\_INSUFFICIENT\_HISTORY}、\texttt{MOM\_ENDPOINT\_MISSING}、\texttt{MOM\_FUTURE\_INPUT}；
+  \item 账面市值比：\texttt{BP\_BOOK\_MISSING}、\texttt{BP\_NONPOSITIVE\_EQUITY}、\texttt{BP\_MARKET\_CAP\_INVALID}、\texttt{UNIT\_MISMATCH}；
+  \item ROE：\texttt{ROE\_TTM\_INCOMPLETE}、\texttt{ROE\_EQUITY\_MISSING}、\texttt{ROE\_DENOMINATOR\_INVALID}；
+  \item 公共检查：\texttt{PIT\_AFTER\_SIGNAL}、\texttt{DUPLICATE\_KEY}、\texttt{CONFIG\_MISSING}。
+\end{itemize}
+
+这些机器码是教学字典，不代表团队内部枚举。[机构实现] 最终原因优先级、是否允许多原因、日志位置和输入血缘标识应由项目接口规范确定。无论采用何种形式，都不得用 \(0\) 代替未知、无效或未计算。
+
+\section{一个匿名证券的人工计算案例}
+
+以下虚构数字仅用于解释公式与实现，不代表真实证券、真实数据库或实证研究结果。设唯一信号日为 \(t^\star\)，所有金额均为同一“教学货币单位”；“样本 A”“样本 B”和“样本 C”均为匿名代称。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{三个匿名证券在单一信号日的教学输入}
+  \label{tab:ch04-toy-inputs}
+  \begin{tabularx}{\textwidth}{p{1.7cm} p{3.4cm} p{3.2cm} p{3.6cm} Y}
+    \toprule
+    证券 & 动量端点与历史 & BP 输入 & ROE 输入 & 点时状态 \\
+    \midrule
+    样本 A & 长端点 100，跳过端点 112；历史充足 & 权益 60，市值 150 & TTM 利润 9；权益 60、40 & 全部不晚于 \(t^\star\) \\
+    样本 B & 长端点缺失；历史不足 & 权益 \(-5\)，市值 80 & TTM 利润 2；权益 \(-5\)、5 & 全部不晚于 \(t^\star\) \\
+    样本 C & 长端点 100，跳过端点 105 & 权益记录在 \(t^\star\) 后才可得 & TTM 组成项不完整 & 财务输入越过截止日 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{casebox}
+样本 A 的动量手算为 \(112/100-1=0.12\)；BP 为 \(60/150=0.40\)；平均权益为 \((60+40)/2=50\)，所以 ROE 类原始值为 \(9/50=0.18\)。这些数值只是公式核对结果，不是收益、因子检验或策略表现。
+
+样本 B 因长端点缺失而输出
+\texttt{MOM\_INSUFFICIENT\_HISTORY}；其账面权益为负，BP 按教学基线无效；平均权益为零，ROE 输出
+\texttt{ROE\_DENOMINATOR\_INVALID}。样本 C 的财务记录在 \(t^\star\) 后才可得，不能用于 BP；TTM 组成项也不得由未来报告补齐。三只证券的信号池记录都应保留，无效因子不等于证券历史不存在。
+\end{casebox}
+
+人工核对时应从输出反向追溯到每个输入端点、可得日、单位和配置。程序值与手算值一致只是必要条件；若手算本身使用了未来记录，两者一致仍然是错误实现。
+
+\section{Python/pandas 风格最小实现}
+
+\cref{lst:ch04-factor-interface} 展示接口与防错逻辑。它假设点时快照和信号池已经由前两章冻结，不重新实现数据连接，也不依赖供应商字段。实际项目应把原因码优先级和单位映射放入版本化配置。
+
+\begin{lstlisting}[
+  caption={三个原始因子的最小接口与防错逻辑},
+  label={lst:ch04-factor-interface}
+]
+FORBIDDEN = {"future_return", "execution_status", "filled"}
+KEY = [
+    "security_id", "signal_date", "factor_name",
+    "factor_version", "config_version",
+]
+
+def check_frozen_inputs(frame):
+    assert FORBIDDEN.isdisjoint(frame.columns)
+    assert frame["signal_eligible"].all()
+    assert frame["pit_snapshot_frozen"].all()
+    assert (frame["input_latest_date"]
+            <= frame["signal_date"]).all()
+
+def compute_momentum(prices, config):
+    assert config["lookback_lag"] > config["skip_lag"]
+    assert config["min_observations"] > config["lookback_lag"]
+    p = prices.sort_values(["security_id", "observation_date"])
+    by_security = p.groupby("security_id", sort=False)
+    p["p_skip"] = by_security["price_proxy"].shift(
+        config["skip_lag"]
+    )
+    p["p_lookback"] = by_security["price_proxy"].shift(
+        config["lookback_lag"]
+    )
+    p["history_count"] = by_security.cumcount() + 1
+    enough = p["history_count"].ge(config["min_observations"])
+    endpoints = p[["p_skip", "p_lookback"]].gt(0).all(axis=1)
+    p["is_valid"] = enough & endpoints
+    p["raw_value"] = (
+        p["p_skip"] / p["p_lookback"] - 1
+    ).where(p["is_valid"])
+    p["invalid_reason"] = None
+    p.loc[~enough, "invalid_reason"] = \
+        "MOM_INSUFFICIENT_HISTORY"
+    p.loc[enough & ~endpoints, "invalid_reason"] = \
+        "MOM_ENDPOINT_MISSING"
+    return p
+
+def compute_book_to_price(snapshot, config):
+    out = snapshot.copy()
+    book_present = snapshot["book_equity_pit"].notna()
+    market_present = snapshot["market_cap"].notna()
+    unit_ok = snapshot["book_unit"].eq(snapshot["market_cap_unit"])
+    denom_ok = market_present & snapshot["market_cap"].gt(
+        config["denom_floor"]
+    )
+    equity_ok = book_present & snapshot["book_equity_pit"].gt(0)
+    valid = book_present & unit_ok & denom_ok & equity_ok
+    out["raw_value"] = (
+        snapshot["book_equity_pit"] / snapshot["market_cap"]
+    ).where(valid)
+    out["is_valid"] = valid
+    out["invalid_reason"] = None
+    out.loc[~book_present, "invalid_reason"] = "BP_BOOK_MISSING"
+    out.loc[book_present & ~unit_ok, "invalid_reason"] = \
+        "UNIT_MISMATCH"
+    out.loc[book_present & unit_ok & ~denom_ok, "invalid_reason"] = \
+        "BP_MARKET_CAP_INVALID"
+    out.loc[book_present & unit_ok & denom_ok & ~equity_ok,
+            "invalid_reason"] = \
+        "BP_NONPOSITIVE_EQUITY"
+    return out
+
+def compute_roe_quality(snapshot, config):
+    out = snapshot.copy()
+    equity_complete = snapshot[
+        ["book_equity_pit", "book_equity_prior_pit"]
+    ].notna().all(axis=1)
+    average_equity = (
+        snapshot["book_equity_pit"]
+        + snapshot["book_equity_prior_pit"]
+    ) / 2
+    ttm_ok = (
+        snapshot["ttm_complete"]
+        & snapshot["net_income_ttm_pit"].notna()
+    )
+    denom_ok = equity_complete & average_equity.gt(
+        config["equity_floor"]
+    )
+    valid = ttm_ok & equity_complete & denom_ok
+    out["raw_value"] = (
+        snapshot["net_income_ttm_pit"] / average_equity
+    ).where(valid)
+    out["is_valid"] = valid
+    out["invalid_reason"] = None
+    out.loc[~ttm_ok, "invalid_reason"] = "ROE_TTM_INCOMPLETE"
+    out.loc[ttm_ok & ~equity_complete, "invalid_reason"] = \
+        "ROE_EQUITY_MISSING"
+    out.loc[ttm_ok & equity_complete & ~denom_ok, "invalid_reason"] = \
+        "ROE_DENOMINATOR_INVALID"
+    return out
+
+def finalize_output(output):
+    check_frozen_inputs(output)
+    required = set(KEY + [
+        "raw_value", "is_valid", "invalid_reason",
+        "input_latest_date",
+    ])
+    assert required.issubset(output.columns)
+    assert not output.duplicated(KEY).any()
+    assert output.loc[~output["is_valid"], "raw_value"].isna().all()
+    return output  # no fillna(0), winsorize, rank, or neutralize
+\end{lstlisting}
+
+代码中两次 \texttt{shift} 都来自同一个
+\texttt{groupby("security\_id")} 对象，因此不会跨证券。示例没有展开所有原因码分支，但生产实现必须把每个失败规则映射到
+\texttt{invalid\_reason}。统一入口还应先把冻结信号池与因子输入按稳定主键连接，且只能对
+\(\mathcal{U}^{\mathrm{signal}}_t\) 中的记录生成输出。
+
+\section{单元测试、边界测试和人工穿行核对}
+
+测试的目的不是证明因子有预测力，而是让错误实现尽早失败。自动化测试至少应覆盖：
+
+\begin{enumerate}
+  \item 构造两只证券相邻记录，证明未按 \texttt{security\_id} 分组的动量 \texttt{shift} 会被测试捕获；
+  \item 窗口内任一 \texttt{input\_latest\_date} 晚于信号日时触发失败；
+  \item 历史观测不足时输出 \texttt{MOM\_INSUFFICIENT\_HISTORY}，而不是数值或零；
+  \item 财务可得日晚于信号日时，不得参与 BP 或 ROE 计算；
+  \item 市值与权益单位不一致时触发 \texttt{UNIT\_MISMATCH}；
+  \item 账面权益为负、零或缺失时，按冻结配置输出明确状态；
+  \item ROE 平均权益为零、负值或低于阈值时输出明确原因；
+  \item TTM 组成项缺失时，不得使用未来报告补齐；
+  \item 相同主键与两个版本字段重复时触发唯一性错误；
+  \item 因子名称和预期方向与定义卡不一致时失败，不得按后续表现翻转；
+  \item 匿名案例手算值与程序值在约定数值精度内一致；
+  \item 静态或接口测试证明因子代码不能访问标签表与成交状态表。
+\end{enumerate}
+
+\begin{practicebox}
+人工穿行至少选择五类记录：一只三个因子均正常的证券；一只上市历史不足的证券；一只财务记录在信号日尚不可得的证券；一只负权益或小分母证券；以及一只发生代码变化或输入缺失的证券。逐条记录信号日、稳定主键、输入观察日与可得日、公式参数、手算结果、程序结果、有效状态、原因码、配置版本和核验人备注。
+\end{practicebox}
+
+对动量还应人工查看证券切换边界前后的若干行，确认窗口没有串号；对财务因子应展开每条点时记录的报告期、可得日与修订版本。若测试只验证最终数值而不检查输入证据，仍可能遗漏前视偏差。
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：未排序就计算 \texttt{shift}；滚动窗口跨证券；把自然日长度当作固定交易观测数；用信号日之后价格补齐动量端点；把报告期末当作财务可得日；混用权益和市值单位；用未来全年值拼 TTM；分母为零仍执行除法；将缺失值填零；在原始构造阶段提前缩尾或排名；按后续结果翻转方向或挑选窗口；以及让因子函数读取未来收益、成交状态或实际持仓。
+\end{warningbox}
+
+这些错误有的会直接报错，有的却会生成平滑且“看起来合理”的数值。后者更危险，因为它们可能系统性改变覆盖率和横截面排序。修复时应从定义卡、输入血缘和最小匿名案例开始，而不是通过观察最终回测结果猜测原因。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：三张冻结因子定义卡；三个原始因子的公式与参数配置；统一输出 schema 和原因码字典；逐信号日原始因子快照；最小实现接口；自动化单元与边界测试结果；以及覆盖正常、历史不足、点时不可得、非法分母和代码变化或缺失输入的人工穿行记录。
+\end{outputbox}
+
+这些产出不包含预处理值、因子评价、参数择优或组合结果。仓库当前没有真实金融数据，因此本章不生成任何实证数值、图形或表现结论。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 为什么 \texttt{raw\_value} 不能被排名值或标准化值覆盖？
+  \item 动量的两个端点分别由哪个参数决定？为什么必须按证券分组？
+  \item “约 12 个月回看、跳过约 1 个月”属于通用原则还是教学基线？
+  \item BP 的财务分子和市值分母分别需要满足什么时间约束？
+  \item 为什么单位不一致比单纯缺失更难从最终数值中发现？
+  \item TTM 利润缺少一个组成项时，为什么不能等待未来报告再回填？
+  \item 负利润与负平均权益对 ROE 有效性的含义是否相同？
+  \item \texttt{is\_valid}、\texttt{invalid\_reason} 和
+  \texttt{risk\_reason} 各自回答什么问题？
+  \item 如何证明因子程序没有读取未来收益或成交状态？
+  \item 哪五个字段共同构成同一因子输出的教学唯一键？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 5 章《因子预处理与基础暴露控制》的衔接}
+
+本章输出的是带有效状态和完整血缘的原始因子长表。第 5 章只能在
+\texttt{is\_valid=True} 且口径已经确认的原始值上讨论缺失机制、异常值、变换、排名、标准化以及行业或市值暴露控制；它不应回头改变本章公式、点时输入或因子方向。
+
+衔接时应保留原始列和版本，另建处理后字段，并记录每一步参数与前后样本数。这样，后续任何分布变化都能区分为原始数据变化、有效性规则变化或预处理变化，而不会把三种原因混在一起。
