@@ -1,5 +1,260 @@
 \chapter{术语与符号表}
+\label{app:glossary}
 
-\section*{待编写}
+\section{如何使用本附录}
 
-% TODO: 后续里程碑补充术语与符号。
+本附录是第 \cref{ch:hypothesis,ch:data-timing,ch:universe-labels,ch:factor-construction,ch:preprocessing,ch:single-factor,ch:robustness,ch:factor-combination,ch:portfolio,ch:backtest} 的快速检索入口，不替代正文定义。术语按研究流程分组；“主要出现”指第一次系统解释该对象的章节，而非唯一出现位置。英文名称和代码名用于帮助读者连接公式、配置与输出字段。
+
+若术语依赖真实数据、交易制度或团队配置，应回到对应章节的“需实际确认”说明，不得仅凭本表推断实际口径。
+
+\section{核心研究术语}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.2cm}p{9.0cm}p{2.8cm}@{}}
+\caption{核心研究设计术语}\label{tab:appA-research-terms}\\
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endhead
+研究假设\\Research hypothesis & 对冻结股票池、信息时点、可计算代理、预测标签、预期方向和证据规则的可检验陈述；它不是因子公式或交易规则。 & \cref{ch:hypothesis} \\
+可证伪性\\Falsifiability & 研究设计允许预先说明哪些观察会反对原想法、触发返工或停止，而不是只接受有利结果。 & \cref{ch:hypothesis} \\
+主分析\\Primary analysis & 在查看本轮结果前冻结、承担主要结论的唯一基线分析。 & \cref{ch:hypothesis} \\
+预注册敏感性\\Preregistered sensitivity & 在结果前登记的少量邻近设定，用于检查结论是否依赖单一合理口径；不能用于事后选赢家。 & \cref{ch:hypothesis} \\
+探索性分析\\Exploratory analysis & 查看结果后产生的新想法，只能形成下一轮假设和新版本，不能改写本轮确认性证据。 & \cref{ch:hypothesis} \\
+样本内\\In-sample & 研究者用于形成、实现或有限选择方案的时间段；其证据不能冒充最终样本外证据。 & \cref{ch:robustness} \\
+验证集\\Validation set & 在时间顺序下用于有限、预注册选择的区间；每次访问和选择理由均应留痕。 & \cref{ch:robustness} \\
+测试集\\Test set & 用于评价已经冻结方案的后续时间区间；看过结果后再改方案会消耗其测试身份。 & \cref{ch:robustness} \\
+最终留出集\\Final holdout & 全部研究设计锁定后原则上只查看一次的最后时间区间；重复访问必须披露。 & \cref{ch:robustness} \\
+数据窥探\\Data snooping & 反复查看同一数据的收益、RankIC、覆盖或成本等结果并据此调整方案，使偶然模式被当作证据。 & \cref{ch:robustness} \\
+选择性汇报\\Selective reporting & 只展示有利参数、样本或成功实验而隐藏失败、报错和证据不足，导致选择次数不可见。 & \cref{ch:robustness} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{数据与时间术语}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.2cm}p{9.0cm}p{2.8cm}@{}}
+\caption{数据与时间术语}\label{tab:appA-data-time-terms}\\
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endhead
+点时数据\\Point-in-Time, PIT & 对每个历史信号截止，只使用当时已经可得且可追溯版本的数据；“数据库今天能查到”不代表历史当时可见。 & \cref{ch:data-timing} \\
+报告期\\Reporting period & 财务或业务数据所描述的经济期间，不等于信息向市场公开或研究者可用的日期。 & \cref{ch:data-timing} \\
+公告日\\Announcement date & 信息对外公布的日期或时间戳；若只有日期而无时刻，是否赶上当日信号截止仍需确认。 & \cref{ch:data-timing} \\
+可得日\\Availability date & 数据经过发布、采集和处理后能够进入研究系统的最早时点，可能晚于公告日。 & \cref{ch:data-timing} \\
+生效日\\Effective date & 成分、行业、证券状态或规则开始适用于研究对象的日期；连接时应检查有效区间。 & \cref{ch:data-timing} \\
+信号截止\\Signal cutoff & 本期因子和目标组合允许读取信息的最晚时点；截止后的状态不能回写信号横截面。 & \cref{ch:data-timing} \\
+信号日\\Signal date & 冻结股票池、因子与目标组合的日期，本案例为每周最后一个交易日收盘后。 & \cref{ch:universe-labels} \\
+成交日\\Execution date & 信号日之后按配置尝试模拟成交的交易日；其状态只在执行阶段读取。 & \cref{ch:universe-labels} \\
+持有期\\Holding period & 从标签或实际持仓的起始成交代理时点到下一结束时点的区间；端点和日历必须版本化。 & \cref{ch:universe-labels} \\
+标签窗口\\Label window & 用于计算未来收益标签的起止时点；起点必须严格晚于信号截止。 & \cref{ch:universe-labels} \\
+向后点时连接\\as-of join & 对每个左表时点选择不晚于它的最近合法右表记录，并同时核验实体键、可得时间和有效区间。 & \cref{ch:data-timing} \\
+前视偏差\\Look-ahead bias & 特征、样本选择或执行假设使用了历史当时尚不可得的信息，使回测获得未来知识。 & \cref{ch:data-timing} \\
+幸存者偏差\\Survivorship bias & 用今天仍存在或仍在指数中的证券重建历史，遗漏后来退市、调出或更名的对象。 & \cref{ch:universe-labels} \\
+历史修订版本\\Historical revision version & 同一观察在不同时间发布的版本；研究应保存当时版本或明确无法恢复历史修订的限制。 & \cref{ch:data-timing} \\
+稳定证券标识\\Stable security identifier & 跨代码变化保持同一实体、又能避免代码复用误连的证券主键；展示代码不能自动替代它。 & \cref{ch:universe-labels} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子与评价术语}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.2cm}p{9.0cm}p{2.8cm}@{}}
+\caption{因子构造、预处理与评价术语}\label{tab:appA-factor-evaluation-terms}\\
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endhead
+原始因子\\Raw factor, \texttt{raw\_value} & 依据冻结公式和点时输入直接计算的因子值，尚未经过第 5 章截面预处理。 & \cref{ch:factor-construction} \\
+处理后因子\\\texttt{processed\_value} & 在同一信号日截面完成有效筛选、缩尾、方向统一、标准化及登记暴露处理后的数值。 & \cref{ch:preprocessing} \\
+有效值\\Valid value & 满足因子定义、输入可得、分母合法且数值有限的观察；有效但极端不等于错误。 & \cref{ch:factor-construction} \\
+缺失值\\Missing value & 输入或结果没有可用数值的状态；缺失记录应保留原因，不能无条件填零。 & \cref{ch:preprocessing} \\
+风险原因\\Risk reason / risk flag & 对仍可计算但需要解释的会计、价格、暴露或交易风险做标记；它与导致因子无效的 \texttt{invalid\_reason} 不同。 & \cref{ch:factor-construction} \\
+缩尾\\Winsorization & 将超出冻结截面边界的有效极端值压到边界，不删除证券，也不使用全样本未来分布。 & \cref{ch:preprocessing} \\
+绝对中位差\\Median absolute deviation, MAD & 当期截面中各值与中位数绝对距离的中位数，用于构造稳健的缩尾尺度。 & \cref{ch:preprocessing} \\
+标准分\\z-score & 当期有效截面内减去均值并除以标准差得到的无量纲数值；退化截面应返回状态。 & \cref{ch:preprocessing} \\
+截面排名\\Cross-sectional rank & 在同一信号日和同一因子内按冻结并列规则排序，主要保留相对顺序。 & \cref{ch:preprocessing} \\
+行业内处理\\Within-industry processing & 在点时行业分组内部排名、去均值或标准化，使证券更多地与同业比较。 & \cref{ch:preprocessing} \\
+残差化\\Residualization & 用当期行业、市值等解释因子截面差异，并把回归残差作为替代处理版本；设计矩阵退化必须留痕。 & \cref{ch:preprocessing} \\
+中性化\\Neutralization & 降低指定非目标暴露的统称，可由行业内处理、残差化或组合约束实现；不是所有因子的机械必选项。 & \cref{ch:preprocessing} \\
+因子方向\\Factor direction & 冻结因子数值与预期未来相对收益的方向符号；评价阶段不得按结果临时翻向。 & \cref{ch:factor-construction} \\
+因子版本\\\texttt{factor\_version} & 标识公式、输入语义和实现身份；实质变化产生新版本，不覆盖历史输出。 & \cref{ch:factor-construction} \\
+覆盖率\\Coverage & 有效因子证券数占冻结信号池证券数的比例，分母不能改成“已有值样本”。 & \cref{ch:preprocessing} \\
+可评价覆盖率\\Evaluable coverage & 同时具有冻结因子值和冻结标签的证券数占信号池的比例，用于披露连接标签后的样本损失。 & \cref{ch:single-factor} \\
+信息系数\\Information coefficient, IC & 同一信号日可评价横截面中因子值与未来收益标签的 Pearson 相关。 & \cref{ch:single-factor} \\
+秩信息系数\\Rank information coefficient, RankIC & 同一信号日因子排名与未来收益排名的相关，评价排序方向而非可交易收益。 & \cref{ch:single-factor} \\
+分组收益\\Grouped return & 按当期因子排序和冻结分组规则汇总各组未来标签；诊断头尾差不等于真实策略收益。 & \cref{ch:single-factor} \\
+单调性\\Monotonicity & 因子组从低到高时，未来收益是否大体按预期方向变化；不能只检查头尾两组。 & \cref{ch:single-factor} \\
+因子自相关\\Factor autocorrelation & 同一证券因子值或排名在相邻信号日的相关，用于描述信号持续性。 & \cref{ch:single-factor} \\
+因子换手\\Factor turnover & 因子排名或诊断分组成员变化的代理，不等同于目标、订单或实际成交换手。 & \cref{ch:single-factor} \\
+暴露\\Exposure & 因子、综合分或组合对行业、市值、流动性、波动等非目标维度的系统关系；暴露需要解释但不自动等于错误。 & \cref{ch:single-factor} \\
+稳健性\\Robustness & 证据对时间推进、合理参数邻域、股票池、子样本和预注册口径变化的抵抗力。 & \cref{ch:robustness} \\
+参数尖峰\\Parameter spike & 只有一个参数点表现突出、相邻合理设定不支持同样结论的形态，提示选择偏差或不稳定。 & \cref{ch:robustness} \\
+条件分组\\Conditional sorting & 先按一个冻结因子分组，再在组内评价另一个因子，以检查其条件增量信息。 & \cref{ch:factor-combination} \\
+留一消融\\Leave-one-out ablation & 在严格共同样本和同一评价规则下依次移除一个因子，比较完整组合与留一版本。 & \cref{ch:factor-combination} \\
+增量价值\\Incremental value & 新因子在已有因子和共同暴露之外，是否仍提供可解释、稳健且基本可交易的信息。 & \cref{ch:factor-combination} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{组合与执行术语}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.2cm}p{9.0cm}p{2.8cm}@{}}
+\caption{组合、成交与回测术语}\label{tab:appA-portfolio-backtest-terms}\\
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+中文名称 / 英文或代码名 & 准确解释 & 主要出现 \\
+\midrule
+\endhead
+综合得分\\Combined score, \(S_{i,t}\) & 对方向和尺度统一、正式纳入且共同有效的因子按冻结规则合成的证券层分数；不是目标权重。 & \cref{ch:factor-combination} \\
+目标权重\\\texttt{target\_weight} & 在信号日点时信息和组合约束下希望持有的证券权重；成交失败前仍只是目标。 & \cref{ch:portfolio} \\
+上一期实际权重\\\path{previous_actual_weight} & 上一调仓完成后延续到当前信号日、已知的实际证券权重快照。 & \cref{ch:portfolio} \\
+期望交易差额\\\path{desired_trade_weight} & 目标权重减上一期实际权重，正值表示期望增加、负值表示期望减少；不是订单或成交。 & \cref{ch:portfolio} \\
+订单\\Order & 由期望差额、冻结净值、交易单位和取整规则形成的买卖请求；订单存在不代表已经成交。 & \cref{ch:backtest} \\
+成交\\Fill / execution & 在成交日状态和价格代理下真正执行的数量与价格事件，并关联原订单。 & \cref{ch:backtest} \\
+部分成交\\Partial fill & 请求量只有一部分执行；成交量、未成交量与请求量必须守恒。 & \cref{ch:backtest} \\
+未成交\\Unfilled & 请求量没有执行；买入失败保留现金，卖出失败保留旧持仓。 & \cref{ch:backtest} \\
+实际持仓\\Actual holding & 由旧持仓、实际成交和公司行动按事件顺序共同决定的证券与现金状态。 & \cref{ch:backtest} \\
+现金权重\\Cash weight & 现金占组合净值的比例；目标阶段的现金与实际成交后现金应分开记录。 & \cref{ch:portfolio} \\
+目标换手\\Target turnover & 目标权重相对上一期实际权重变化的单边规模，仍未考虑订单取整或成交失败。 & \cref{ch:portfolio} \\
+订单换手\\Order turnover & 实际送入成交模拟的订单规模占组合净值的比例，可能因取整和现金规则偏离目标换手。 & \cref{ch:backtest} \\
+实际成交换手\\Realized turnover & 仅以实际成交金额计算的换手，未成交订单不进入分子。 & \cref{ch:backtest} \\
+毛收益\\Gross return & 实际持仓在扣除本期交易成本前的组合收益，需与公司行动和现金口径一致。 & \cref{ch:backtest} \\
+净收益\\Net return & 毛收益减去本期成本占净值比例后的结果；费用不能在现金和收益分解中重复扣除。 & \cref{ch:backtest} \\
+交易成本\\Transaction cost & 显性费用、滑点和冲击等因实际成交产生的成本集合；历史口径需实际确认。 & \cref{ch:backtest} \\
+滑点\\Slippage & 模拟执行价相对冻结基准价格的不利偏离代理，方向和价格基准需配置。 & \cref{ch:backtest} \\
+冲击成本\\Market impact & 订单相对流动性规模可能引起的额外价格代价；本课程仅使用透明配置化概念模型。 & \cref{ch:backtest} \\
+最大回撤\\Maximum drawdown & 净值相对此前历史峰值的最大下跌幅度，必须基于完整且口径一致的序列。 & \cref{ch:backtest} \\
+夏普比率\\Sharpe ratio & 超过冻结无风险收益口径的平均收益相对波动的比率；不能作为单一研究结论。 & \cref{ch:backtest} \\
+跟踪误差\\Tracking error & 组合相对冻结基准的超额收益波动，频率、年化与缺失期处理需一致。 & \cref{ch:backtest} \\
+信息比率\\Information ratio, IR & 平均超额收益相对跟踪误差的比率，依赖同一基准与样本区间。 & \cref{ch:backtest} \\
+目标—实际偏差\\Target--actual gap & 实际权重减目标权重，用于解释成交失败、旧持仓延续、现金和约束导致的实现差异。 & \cref{ch:backtest} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{数学符号表}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.2cm}p{9.0cm}p{2.8cm}@{}}
+\caption{主体讲义主要数学符号}\label{tab:appA-symbols}\\
+\toprule
+符号 / 代码名 & 含义 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+符号 / 代码名 & 含义 & 主要出现 \\
+\midrule
+\endhead
+\(t\) & 周度信号日或对应的信号截面索引。 & \cref{ch:universe-labels} \\
+\(\tau(t)\) & 与信号日 \(t\) 对应的下一交易日成交代理时点。 & \cref{ch:universe-labels} \\
+\(\mathcal{U}^{\mathrm{research}}_t\) & 信号日按历史生效成分构建的研究股票池。 & \cref{ch:universe-labels} \\
+\(\mathcal{U}^{\mathrm{signal}}_t\) & 仅用信号截止及以前信息过滤后的信号有效股票池。 & \cref{ch:universe-labels} \\
+\(\mathcal{V}_{f,t}\) & 因子 \(f\) 在 \(t\) 日满足定义且数值有限的有效证券集合。 & \cref{ch:preprocessing} \\
+\(\mathcal{V}^{\mathrm{joint}}_t\) & 正式纳入因子在 \(t\) 日的共同有效证券交集。 & \cref{ch:factor-combination} \\
+\(\mathcal{C}_t\) & 经综合分、排序和组合规则形成的目标组合候选集合。 & \cref{ch:universe-labels} \\
+\(\mathcal{X}_{\tau(t)}\) & 成交时点依据当时状态和价格代理判断的可执行证券集合。 & \cref{ch:universe-labels} \\
+\(\mathcal{H}_{\tau(t)}\) & 订单处理后真正持有的证券集合，包括未能卖出的旧持仓。 & \cref{ch:universe-labels} \\
+\(f_{i,t}\) & 证券 \(i\) 在信号日 \(t\) 的冻结因子值。 & \cref{ch:single-factor} \\
+\(y_{i,t}\) & 证券 \(i\) 对应冻结标签窗口的未来收益。 & \cref{ch:universe-labels} \\
+\(z_{f,i,t}\) & 因子 \(f\) 对证券 \(i\) 在 \(t\) 日方向和尺度统一后的处理值。 & \cref{ch:factor-combination} \\
+\(S_{i,t}\) & 证券 \(i\) 在 \(t\) 日的冻结多因子综合得分。 & \cref{ch:factor-combination} \\
+\(w^{\mathrm{base}}_{i,t}\) & 约束调整前、由候选规则产生的基础目标权重。 & \cref{ch:portfolio} \\
+\(w^{\mathrm{target}}_{i,t}\) & 完成信号日约束与降级规则后的证券目标权重。 & \cref{ch:portfolio} \\
+\(h^{\mathrm{actual}}_{i,t}\) & 证券 \(i\) 的实际持仓权重；代码和第 10 章公式也使用 \texttt{actual\_weight} 或 \(w^{\mathrm{actual}}_{i,t}\)。 & \cref{ch:backtest} \\
+\(w^{\mathrm{cash}}_t\) & 目标或实际现金占组合净值的权重，使用时须注明层次。 & \cref{ch:portfolio} \\
+\(\mathrm{IC}_t\) & 信号日 \(t\) 因子值与未来收益的横截面 Pearson 相关。 & \cref{ch:single-factor} \\
+\(\mathrm{RankIC}_t\) & 信号日 \(t\) 因子排名与未来收益排名的横截面相关。 & \cref{ch:single-factor} \\
+\(\mathrm{Coverage}_{f,t}\) & 因子 \(f\) 在 \(t\) 日有效证券数除以冻结信号池证券数。 & \cref{ch:preprocessing} \\
+\(\mathrm{Turnover}_t\) & 某一明确层次在 \(t\) 的换手；必须用上标或字段名区分因子、目标、订单和成交。 & \cref{ch:single-factor,ch:portfolio,ch:backtest} \\
+\(\mathrm{GrossReturn}_t\) & 基于实际持仓、扣除本期成本前的组合收益。 & \cref{ch:backtest} \\
+\(\mathrm{NetReturn}_t\) & 毛收益扣除本期成本占净值比例后的组合收益。 & \cref{ch:backtest} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{状态码与版本字段}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.5cm}p{8.7cm}p{2.8cm}@{}}
+\caption{常用状态码与版本字段}\label{tab:appA-status-version}\\
+\toprule
+字段或状态 & 用途 & 主要出现 \\
+\midrule
+\endfirsthead
+\toprule
+字段或状态 & 用途 & 主要出现 \\
+\midrule
+\endhead
+\texttt{is\_valid} / \texttt{invalid\_reason} & 区分因子是否满足定义，并保留历史不足、输入缺失、非法分母等原因；无效记录不能静默删除。 & \cref{ch:factor-construction} \\
+\texttt{processing\_status} & 记录预处理成功、输入无效、MAD 或标准差退化、残差化失败等状态。 & \cref{ch:preprocessing} \\
+\texttt{OK}, \texttt{INSUFFICIENT\_N}, \texttt{CONSTANT\_FACTOR}, \texttt{CONSTANT\_LABEL}, \texttt{MANY\_TIES} & 单信号日评价的典型状态，使不能计算 IC 或分组的原因可追溯；具体阈值来自配置。 & \cref{ch:single-factor} \\
+\texttt{PASS / FAIL /}\\\texttt{INSUFFICIENT\_EVIDENCE} & 模板中的空白判断枚举，分别表示通过、失败和证据不足；必须由实际证据填写。 & \cref{ch:hypothesis} \\
+\texttt{PARTIAL\_ALLOCATION} / \texttt{INFEASIBLE} & 目标组合部分配置或约束不可行状态；前者可保留现金，后者不得静默放宽硬约束。 & \cref{ch:portfolio} \\
+\texttt{order\_status} / \texttt{order\_reason} & 说明订单是否有效、被取整或受现金等规则影响；订单不是成交。 & \cref{ch:backtest} \\
+\texttt{fill\_status} / \texttt{unfilled\_reason} & 记录完全、部分、未成交、未知或无效及原因；不得回写信号日对象。 & \cref{ch:backtest} \\
+\texttt{data\_version} / \texttt{universe\_version} / \texttt{label\_version} & 标识数据快照、历史股票池和标签规则；不得只写“最新”。 & \cref{ch:data-timing,ch:robustness} \\
+\texttt{factor\_version} / \texttt{preprocess\_version} & 标识因子公式和预处理流程；评价与合成只能读取已冻结版本。 & \cref{ch:factor-construction,ch:preprocessing} \\
+\texttt{combination\_version} & 标识正式因子集合、共同样本与综合分规则；因子集合或权重变化即新版本。 & \cref{ch:factor-combination} \\
+\texttt{portfolio\_version} / \texttt{constraint\_version} & 标识目标组合规则、约束优先级和降级逻辑。 & \cref{ch:portfolio} \\
+\texttt{execution\_version} / \texttt{holding\_version} / \texttt{backtest\_version} & 标识成交规则、持仓账本和完整回测配置，使订单、成交、现金和收益可重放。 & \cref{ch:backtest} \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{容易混淆概念对照}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{4.0cm}p{5.4cm}p{5.6cm}@{}}
+\caption{容易混淆的对象及其职责边界}\label{tab:appA-confusable-objects}\\
+\toprule
+对象组 & 各自回答的问题 & 不得混用的原因 \\
+\midrule
+\endfirsthead
+\toprule
+对象组 & 各自回答的问题 & 不得混用的原因 \\
+\midrule
+\endhead
+报告期 / 公告日 / 可得日 & 报告期描述经济期间；公告日描述对外发布；可得日描述研究系统最早可用。 & 按报告期直接前填会让尚未发布的信息进入历史信号。 \\
+原始因子 / 处理后因子 / 综合分 & 原始因子是冻结公式输出；处理后因子完成当日截面处理；综合分合成多个正式因子。 & 三者版本、尺度和用途不同，综合分也不是目标持仓。 \\
+研究池 / 信号池 / 目标候选 / 实际持仓 & 研究池回答历史成分；信号池回答谁可比较；候选回答想持有谁；实际持仓回答执行后真正持有什么。 & 成交日状态不能回删信号池，未能卖出的证券也可能不在目标候选但仍在实际持仓。 \\
+目标权重 / 期望交易 / 订单 / 成交 / 实际持仓 & 依次表示想持多少、相对旧持仓希望改变多少、发出什么请求、实际执行多少、最终留下什么。 & 把目标当成交会隐藏部分成交、未成交、现金和旧持仓延续。 \\
+因子换手 / 目标换手 / 订单换手 / 实际成交换手 & 分别描述排名或成员变化、目标权重变化、订单规模和实际成交规模。 & 分子、分母与发生阶段不同，不能共用一个“turnover”列。 \\
+毛收益 / 成本 / 净收益 & 毛收益是实际持仓扣成本前结果；成本来自实际成交；净收益为毛收益扣成本。 & 成本若已进入现金账本，不得在收益分解中重复扣除。 \\
+数据问题 / 不利结果 / 证据不足 & 数据问题是可定位的时序、版本或实现错误；不利结果是可信证据不支持假设；证据不足是样本或覆盖不足以评价。 & 只有数据问题允许返工；不利结果不能借返工继续搜索，证据不足也不能记为通过。 \\
+\bottomrule
+\end{longtable}
+\endgroup

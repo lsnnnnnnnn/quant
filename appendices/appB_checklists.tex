@@ -1,5 +1,346 @@
 \chapter{研究检查清单}
+\label{app:checklists}
 
-\section*{待编写}
+\newcommand{\quantcheckstatus}{%
+  \(\square\) 通过\newline
+  \(\square\) 不通过\newline
+  \(\square\) 不适用\newline
+  \(\square\) 待确认%
+}
 
-% TODO: 后续里程碑补充检查清单。
+\section{如何使用本附录}
+
+本附录把第 \cref{ch:hypothesis,ch:data-timing,ch:universe-labels,ch:factor-construction,ch:preprocessing,ch:single-factor,ch:robustness,ch:factor-combination,ch:portfolio,ch:backtest} 的质量闸门整理为可打印清单。每项都必须勾选状态并附最小证据；空白状态不表示已经通过。“责任人或备注”用于记录复核人、问题编号、适用边界或待确认口径。
+
+若任一检查结果改变，应保留旧版本并新建记录，不能覆盖不利结论。依赖真实数据、指数、成交代理、制度或团队阈值的项目应选择“待确认”，直到获得可核验依据。
+
+\section{研究立项与预注册}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{研究立项与预注册检查清单}\label{tab:appB-preregistration}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B1.1 & 研究问题包含市场、股票池、信号时点、预测标签和方向 & 版本化统一研究任务 & \quantcheckstatus & -- \\
+B1.2 & 投资直觉、经济机制、可计算代理和统计假设彼此区分 & 研究假设卡与代理说明 & \quantcheckstatus & -- \\
+B1.3 & \(H_0\)、\(H_1\) 及可否定证据在实验前写明 & 假设版本与冻结时间 & \quantcheckstatus & -- \\
+B1.4 & 主分析只有一个冻结基线 & 主配置及摘要哈希 & \quantcheckstatus & -- \\
+B1.5 & 预注册敏感性仅含少量有理由的邻近设定 & 候选清单与事前理由 & \quantcheckstatus & -- \\
+B1.6 & 探索性分析不能反向进入本轮主结论 & 分析类型字段与新版本规则 & \quantcheckstatus & -- \\
+B1.7 & 支持、不支持、返工、停止和证据不足的条件明确 & 决策规则与停止条件 & \quantcheckstatus & -- \\
+B1.8 & 研究、数据、代码、配置与责任人身份可追溯 & \texttt{research\_id}、版本与责任人 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{数据与 Point-in-Time}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{数据与 Point-in-Time 检查清单}\label{tab:appB-pit}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B2.1 & 每个关键字段记录观察、报告、公告、可得、生效和修订时点 & 字段审计表与数据字典 & \quantcheckstatus & -- \\
+B2.2 & 信号输入的可得时间不晚于信号截止 & 自动断言与抽样记录 & \quantcheckstatus & -- \\
+B2.3 & 财务报告期未被直接当作可得日 & 公告/可得连接样本 & \quantcheckstatus & -- \\
+B2.4 & as-of join 同时使用稳定实体键、方向和容忍区间 & 连接配置与未匹配报告 & \quantcheckstatus & -- \\
+B2.5 & 历史修订版本可恢复，或限制与保守假设已披露 & 数据快照与版本说明 & \quantcheckstatus & -- \\
+B2.6 & 行业、指数成分、证券状态按历史生效区间连接 & 生效区间穿行记录 & \quantcheckstatus & -- \\
+B2.7 & 稳定证券标识可处理代码变化与代码复用 & 主键映射审计 & \quantcheckstatus & -- \\
+B2.8 & 任何全样本统计、未来价格或未来状态未进入早期信号 & 禁止字段扫描与时间边界测试 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{股票池和收益标签}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{股票池与收益标签检查清单}\label{tab:appB-universe-labels}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B3.1 & 研究池由信号日已生效的历史成分生成 & 历史成分版本与抽样重放 & \quantcheckstatus & -- \\
+B3.2 & 未使用当前成分或当前存续证券回填历史 & 幸存者偏差静态检查 & \quantcheckstatus & -- \\
+B3.3 & 信号池过滤只使用截止时点已知信息 & 过滤规则、时点和原因码 & \quantcheckstatus & -- \\
+B3.4 & 成交日状态只影响成交，不回删信号日样本 & 信号快照与成交状态对照 & \quantcheckstatus & -- \\
+B3.5 & 标签起点严格晚于信号截止 & 事件时序与边界断言 & \quantcheckstatus & -- \\
+B3.6 & 标签端点、价格代理、复权与公司行动口径版本化 & 标签配置与版本 & \quantcheckstatus & -- \\
+B3.7 & 标签缺失、不足和不可计算均保留明确原因 & 标签状态分布与样本损失 & \quantcheckstatus & -- \\
+B3.8 & 周末、节假日、成分生效前后和成交失败均有边界样本 & 自动测试与人工穿行 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子构造}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{因子构造检查清单}\label{tab:appB-factor-construction}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B4.1 & 因子定义卡写清机制、公式、方向、窗口、输入与版本 & 因子定义卡 & \quantcheckstatus & -- \\
+B4.2 & 所有输入满足点时可得，未读取标签、成交或回测字段 & 数据依赖清单与禁止字段断言 & \quantcheckstatus & -- \\
+B4.3 & 价格、复权、财务 TTM、权益、市值和单位语义明确 & 口径登记与待确认项 & \quantcheckstatus & -- \\
+B4.4 & 历史不足、输入缺失、负权益、小分母等有确定原因码 & 无效状态表 & \quantcheckstatus & -- \\
+B4.5 & 原始值、有效状态、输入血缘和公式版本同时输出 & 原始因子 schema & \quantcheckstatus & -- \\
+B4.6 & 相同输入和配置产生相同结果，主键组合唯一 & 确定性测试与唯一性断言 & \quantcheckstatus & -- \\
+B4.7 & 关键证券与日期完成独立手算或逐步穿行 & 人工核对记录与差异 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子预处理}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{因子预处理检查清单}\label{tab:appB-preprocessing}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B5.1 & 缺失、无效、极端有效与普通有效状态没有混用 & 输入状态和原因分布 & \quantcheckstatus & -- \\
+B5.2 & 覆盖率分母来自冻结信号池 & 分子、分母与日期级报告 & \quantcheckstatus & -- \\
+B5.3 & 缩尾、排名和标准化逐信号日、逐因子执行 & 分组键与参数表 & \quantcheckstatus & -- \\
+B5.4 & MAD、标准差或小样本退化返回明确状态 & 退化测试与降级配置 & \quantcheckstatus & -- \\
+B5.5 & 因子方向来自冻结定义卡，不按结果翻转 & 方向字段与版本 & \quantcheckstatus & -- \\
+B5.6 & 行业、市值等暴露数据满足点时要求 & 暴露输入版本与截止断言 & \quantcheckstatus & -- \\
+B5.7 & 行业内处理或残差化的选择与失败规则事前冻结 & 主基线和敏感性配置 & \quantcheckstatus & -- \\
+B5.8 & 预处理函数未读取未来收益或组合表现 & 接口与禁止字段扫描 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{单因子评价}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{单因子评价检查清单}\label{tab:appB-single-factor}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B6.1 & 因子覆盖与可评价覆盖分别报告 & 日期级覆盖和损失原因 & \quantcheckstatus & -- \\
+B6.2 & IC 与 RankIC 按信号日独立计算 & 逐期结果和样本数 & \quantcheckstatus & -- \\
+B6.3 & 小样本、常数、并列过多和标签不足返回状态 & 状态码与边界测试 & \quantcheckstatus & -- \\
+B6.4 & 分组边界、组数和并列规则逐期且已冻结 & 分组配置与空组状态 & \quantcheckstatus & -- \\
+B6.5 & 同时检查方向、时间稳定性和分组单调性 & 标准单因子报告 & \quantcheckstatus & -- \\
+B6.6 & 行业、市值、流动性与波动暴露完整披露 & 暴露诊断表 & \quantcheckstatus & -- \\
+B6.7 & 因子自相关、成员变化、换手和成本压力有独立字段 & 换手与成本敏感性报告 & \quantcheckstatus & -- \\
+B6.8 & 阶段结论未由单一平均 RankIC 决定 & 多维证据与不确定性说明 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{稳健性与反过拟合}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{稳健性与反过拟合检查清单}\label{tab:appB-robustness}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B7.1 & 训练、验证、测试和最终留出按时间排列且职责清楚 & 样本切分版本与边界 & \quantcheckstatus & -- \\
+B7.2 & 未随机打乱时间，也未让标签跨越禁止边界 & 切分断言与缓冲规则 & \quantcheckstatus & -- \\
+B7.3 & 参数扰动仅来自预注册合理邻域 & 候选集合与事前理由 & \quantcheckstatus & -- \\
+B7.4 & 时间、行业、市值、流动性、股票池和状态子样本均按同一规则评价 & 稳健性矩阵 & \quantcheckstatus & -- \\
+B7.5 & 参数区域而非孤立尖峰支持结论 & 参数邻域完整结果 & \quantcheckstatus & -- \\
+B7.6 & 测试与最终留出查看次数可追溯 & 访问台账 & \quantcheckstatus & -- \\
+B7.7 & 所有成功、失败、报错和证据不足实验均保留 & 追加式实验台账 & \quantcheckstatus & -- \\
+B7.8 & 最终因子版本及适用边界在进入合成前冻结 & 阶段决定与版本清单 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子冗余与合成}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{因子冗余与合成检查清单}\label{tab:appB-combination}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B8.1 & 只有通过第 7 章闸门的冻结因子进入正式候选 & 资格表与适用条件 & \quantcheckstatus & -- \\
+B8.2 & 方向、尺度、主键和因子/预处理版本一致 & 输入审计与唯一性断言 & \quantcheckstatus & -- \\
+B8.3 & 单因子、两两、共同和可评价覆盖分别报告 & 共同覆盖报告 & \quantcheckstatus & -- \\
+B8.4 & 公式、数据来源、数值相关和共同暴露四层冗余均检查 & 冗余矩阵与解释 & \quantcheckstatus & -- \\
+B8.5 & 条件分组使用预注册顺序和共同评价口径 & 条件分组登记与结果 & \quantcheckstatus & -- \\
+B8.6 & 留一消融固定共同样本并披露样本变化 & 完整与留一版本报告 & \quantcheckstatus & -- \\
+B8.7 & 综合分只使用正式共同有效因子，缺失不填零 & 得分函数与失败原因 & \quantcheckstatus & -- \\
+B8.8 & 因子集合、权重和合成版本唯一且不可覆盖 & \texttt{combination\_version} & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{目标组合}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{目标组合检查清单}\label{tab:appB-portfolio}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B9.1 & 输入为唯一冻结综合分版本，不重新处理或选择因子 & 输入版本和禁止字段断言 & \quantcheckstatus & -- \\
+B9.2 & 候选数量、排序和并列规则事前冻结 & 候选配置与审计表 & \quantcheckstatus & -- \\
+B9.3 & 基础权重与约束后目标权重分开保存 & 权重转换表 & \quantcheckstatus & -- \\
+B9.4 & 个股、行业、流动性与换手约束仅用信号日已知信息 & 约束输入版本与截止检查 & \quantcheckstatus & -- \\
+B9.5 & 上一期实际权重来自已知持仓快照 & 持仓版本与连接主键 & \quantcheckstatus & -- \\
+B9.6 & 约束优先级、不可行和降级规则确定且可重放 & 降级轨迹与状态 & \quantcheckstatus & -- \\
+B9.7 & 现金是约束后的显式结果，未强制错误归一化 & 证券加现金权重守恒 & \quantcheckstatus & -- \\
+B9.8 & 未偷看下一交易日停牌、价格、成交量或成交结果 & 禁止字段扫描与接口测试 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{含成本回测}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{含成本回测检查清单}\label{tab:appB-backtest}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B10.1 & 信号、目标、订单、成交、持仓、收益按事件时间推进 & 事件时序与运行日志 & \quantcheckstatus & -- \\
+B10.2 & 订单与成交分离，完全、部分、未成交和未知均留痕 & 订单表、成交表与原因码 & \quantcheckstatus & -- \\
+B10.3 & 执行价、估值价、复权和公司行动分工明确 & 价格与公司行动配置 & \quantcheckstatus & -- \\
+B10.4 & 费用只基于实际成交，滑点与冲击版本化 & 成本配置与逐笔核对 & \quantcheckstatus & -- \\
+B10.5 & 未成交买单保留现金，未成交卖单保留旧持仓 & 边界测试与持仓穿行 & \quantcheckstatus & -- \\
+B10.6 & 证券数量和现金账本逐事件守恒 & 守恒断言与人工重算 & \quantcheckstatus & -- \\
+B10.7 & 公司行动未与复权收益或现金重复计入 & 公司行动测试与差异表 & \quantcheckstatus & -- \\
+B10.8 & 收益来自实际持仓，毛收益、成本和净收益可还原 & 收益分解与净值序列 & \quantcheckstatus & -- \\
+B10.9 & 四类换手、未成交、现金和目标—实际偏差分层报告 & 执行诊断表 & \quantcheckstatus & -- \\
+B10.10 & 结果解释覆盖预测、风险、换手、成本和可交易性 & 八维解释与限制 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{最终报告与交付}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{最终报告与交付检查清单}\label{tab:appB-delivery}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B11.1 & 观察事实、推断、待验证假设、建议和限制分开 & 最终结论模板 & \quantcheckstatus & -- \\
+B11.2 & 失败实验、不利结果和证据不足完整保留 & 实验台账与报告附表 & \quantcheckstatus & -- \\
+B11.3 & 股票池、数据、标签、因子、组合、执行和成本版本齐全 & 版本清单与摘要哈希 & \quantcheckstatus & -- \\
+B11.4 & 代码、配置、依赖和运行入口可由他人重放 & 编译/运行说明与环境记录 & \quantcheckstatus & -- \\
+B11.5 & 图表标题区分实证、示意、结构模板和空白模板 & 图表目录与抽查 & \quantcheckstatus & -- \\
+B11.6 & 未把历史结果写成未来收益保证或投资建议 & 内容审查记录 & \quantcheckstatus & -- \\
+B11.7 & 主讲义、源码、AI 原始提问与使用记录均在提交包 & 交付清单 & \quantcheckstatus & -- \\
+B11.8 & 人工核验状态真实，未以 AI 或静态检查替代人工责任 & 复核签署与未完成项 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{停止线检查}
+
+\begin{principlebox}
+\textbf{[通用原则]} 出现停止线问题时，应停止受污染对象的下游结论，定位最早受影响的数据、版本或账本事件后重新建立证据链；不得只在最终指标层手工修补。
+\end{principlebox}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{1.0cm}p{4.4cm}p{4.6cm}p{2.8cm}p{2.4cm}@{}}
+\caption{停止线检查清单}\label{tab:appB-stop-lines}\\
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endfirsthead
+\toprule
+编号 & 检查项 & 最小证据 & 状态 & 责任人或备注 \\
+\midrule
+\endhead
+B12.1 & 使用未来信息构造特征、筛选样本或改善执行 & 时间依赖图与禁止字段审计 & \quantcheckstatus & -- \\
+B12.2 & 使用当前指数成分或当前存续证券回填历史 & 历史成分来源与抽样重放 & \quantcheckstatus & -- \\
+B12.3 & 把财务报告期直接当作公告日或可得日 & 财务连接规则与公告样本 & \quantcheckstatus & -- \\
+B12.4 & 测试集或最终留出集被反复用于调参 & 访问台账与冻结时间 & \quantcheckstatus & -- \\
+B12.5 & 原始数据、历史修订或关键版本无法追溯 & 数据血缘与版本库存 & \quantcheckstatus & -- \\
+B12.6 & 目标组合偷看成交日停牌、价格限制或未来成交量 & 组合输入字段审计 & \quantcheckstatus & -- \\
+B12.7 & 未成交证券从持仓账本中消失 & 未成交卖出边界测试 & \quantcheckstatus & -- \\
+B12.8 & 现金或证券数量账本不守恒 & 守恒断言与人工重算 & \quantcheckstatus & -- \\
+B12.9 & 编造、删除或选择性展示收益、IC、Sharpe、回撤或失败结果 & 原始输出、台账与报告对照 & \quantcheckstatus & -- \\
+B12.10 & 无法复现代码、数据和配置版本 & 独立重放记录与版本清单 & \quantcheckstatus & -- \\
+\bottomrule
+\end{longtable}
+\endgroup

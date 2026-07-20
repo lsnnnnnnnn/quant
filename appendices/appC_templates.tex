@@ -1,5 +1,459 @@
 \chapter{研究模板}
+\label{app:templates}
 
-\section*{待编写}
+\newcommand{\quantblank}{\texttt{待填写}}
+\newcommand{\quantdash}{\texttt{--}}
+\newcommand{\quantconfirm}{\texttt{ACTUAL\_CONFIRM}}
+\newcommand{\quantresult}{%
+  \texttt{PASS / FAIL /}\newline
+  \texttt{INSUFFICIENT\_}\newline
+  \texttt{EVIDENCE}%
+}
 
-% TODO: 后续里程碑补充研究模板。
+\section{如何使用本附录}
+
+本附录提供与第 \cref{ch:hypothesis,ch:data-timing,ch:universe-labels,ch:factor-construction,ch:preprocessing,ch:single-factor,ch:robustness,ch:factor-combination,ch:portfolio,ch:backtest} 一一对应的空白模板。复制后保留字段名，使用 \quantblank、\quantdash、\quantconfirm 或 \quantresult 填写未完成状态；不得用删除字段代替说明未知项。
+
+\begin{principlebox}
+\textbf{[通用原则]} 下列表格都是空白结构，不代表任何研究、数据、因子或回测已经通过。没有真实运行证据时，不得填写收益、IC、Sharpe、回撤、证券、日期或团队阈值。
+\end{principlebox}
+
+\section{统一研究任务说明模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.7cm}p{5.0cm}p{3.4cm}p{3.1cm}@{}}
+\caption{统一研究任务说明模板}\label{tab:appC-research-task}\\
+\toprule
+字段 & 填写内容 & 核对要求 & 状态/备注 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 填写内容 & 核对要求 & 状态/备注 \\
+\midrule
+\endhead
+\texttt{research\_id} & \quantblank & 唯一且不复用 & \quantdash \\
+\texttt{research\_question} & \quantblank & 可支持、否定或判为证据不足 & \quantresult \\
+\texttt{market} & \quantconfirm & 不虚构实际市场口径 & \quantdash \\
+\texttt{universe\_definition} & \quantconfirm & 历史成分与版本明确 & \quantdash \\
+\texttt{signal\_frequency} & \quantblank & 与日历配置一致 & \quantdash \\
+\texttt{rebalance\_frequency} & \quantblank & 与持有期一致 & \quantdash \\
+\texttt{signal\_cutoff} & \quantconfirm & 精确到可核验时点 & \quantdash \\
+\texttt{execution\_timing} & \quantconfirm & 严格晚于信号截止 & \quantdash \\
+\texttt{holding\_period} & \quantconfirm & 起止端点明确 & \quantdash \\
+\texttt{label\_definition} & \quantconfirm & 价格代理和失败状态版本化 & \quantdash \\
+\texttt{candidate\_factors} & \quantblank & 每个因子有独立假设卡 & \quantdash \\
+\texttt{main\_preprocessing} & \quantblank & 唯一冻结基线 & \quantdash \\
+\path{main_evaluation_metrics} & \quantblank & 不由单一指标决定 & \quantdash \\
+\texttt{robustness\_plan} & \quantblank & 只含预注册检查 & \quantdash \\
+\texttt{portfolio\_form} & \quantblank & 与研究目标一致 & \quantdash \\
+\texttt{cost\_scope} & \quantconfirm & 费用与执行代理可追溯 & \quantdash \\
+\path{primary_decision_rule} & \quantconfirm & 事前冻结 & \quantresult \\
+\texttt{stop\_conditions} & \quantblank & 包含时序、版本和证据停止线 & \quantdash \\
+\texttt{data\_requirements} & \quantblank & PIT 字段与血缘齐全 & \quantdash \\
+\texttt{known\_limitations} & \quantblank & 未知项不留空 & \quantdash \\
+\texttt{owner} & \quantconfirm & 研究与复核责任分开记录 & \quantdash \\
+\texttt{version} & \quantblank & 实质变化生成新版本 & \quantdash \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子假设卡模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{4.0cm}p{7.0cm}p{4.2cm}@{}}
+\caption{因子假设卡模板}\label{tab:appC-hypothesis-card}\\
+\toprule
+字段 & 填写内容 & 核对提示 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 填写内容 & 核对提示 \\
+\midrule
+\endhead
+因子名称 / \texttt{factor\_name} & \quantblank & 与定义卡和输出一致 \\
+研究问题 & \quantblank & 明确股票池、标签和方向 \\
+经济机制 & \quantblank & 候选解释，不写成已证实事实 \\
+可计算代理 & \quantblank & 能连接到点时字段 \\
+预期方向 & \quantblank & 实验后不得翻向 \\
+所需数据 & \quantconfirm & 包含最晚可得时点 \\
+历史可得时间 & \quantconfirm & 公告、可得和生效语义明确 \\
+主窗口或口径 & \quantconfirm & 主基线唯一 \\
+预测标签 & \quantconfirm & 起点晚于信号截止 \\
+主要检验 & \quantblank & 覆盖、方向、单调性、暴露、换手、成本、稳健性 \\
+预注册敏感性 & \quantblank & 少量且有事前理由 \\
+可能风险暴露 & \quantblank & 行业、市值、流动性、波动等 \\
+换手与交易风险 & \quantblank & 不冒充正式回测 \\
+支持条件 & \quantconfirm & 多维证据规则 \\
+否定条件 & \quantconfirm & 可信不利结果可触发 \\
+证据不足条件 & \quantconfirm & 与失败区分 \\
+停止条件 & \quantblank & 数据、实现、证据与测试访问 \\
+主要失效机制 & \quantblank & 能解释适用边界 \\
+假设版本 / 冻结时间 & \quantblank / \quantconfirm & 结果前冻结 \\
+阶段结果 & \quantresult & 由真实证据填写 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{数据可得性与字段审计模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{2.1cm}p{1.35cm}p{1.35cm}p{1.35cm}p{1.35cm}p{1.35cm}p{2.0cm}p{2.8cm}@{}}
+\caption{数据可得性与字段审计模板}\label{tab:appC-data-audit}\\
+\toprule
+概念字段 & 观察日 & 报告期 & 公告日 & 可得日 & 生效日 & 修订/版本 & 规则、状态与备注 \\
+\midrule
+\endfirsthead
+\toprule
+概念字段 & 观察日 & 报告期 & 公告日 & 可得日 & 生效日 & 修订/版本 & 规则、状态与备注 \\
+\midrule
+\endhead
+\quantblank & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantblank & \quantresult \\
+\quantblank & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantblank & \quantresult \\
+\quantblank & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantblank & \quantresult \\
+\quantblank & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantblank & \quantresult \\
+\quantblank & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantconfirm & \quantblank & \quantresult \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\noindent 建议附加字段：稳定实体键、来源表、单位、频率、空值语义、as-of 方向、允许容忍期、血缘位置、人工核验人和核验时间，均使用 \quantblank 或 \quantconfirm。
+
+\section{股票池、过滤和标签登记模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.8cm}p{6.2cm}p{5.2cm}@{}}
+\caption{股票池、过滤和标签登记模板}\label{tab:appC-universe-label}\\
+\toprule
+登记对象 & 填写内容 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+登记对象 & 填写内容 & 审计要求 \\
+\midrule
+\endhead
+历史研究池定义 & \quantconfirm & 历史成分、生效区间与版本 \\
+稳定证券标识 & \quantconfirm & 代码变化和复用处理 \\
+信号池过滤规则 & \quantblank & 条件、可知时点、原因码与优先级 \\
+信号日 / 截止 & \quantconfirm & 交易日历版本 \\
+调仓日 / 成交时点 & \quantconfirm & 严格晚于信号截止 \\
+标签起点价格代理 & \quantconfirm & 价格、复权与缺失状态 \\
+标签终点价格代理 & \quantconfirm & 与持有期日历一致 \\
+标签公式 / \texttt{label\_version} & \quantblank & 输入和端点可重放 \\
+成交日状态归属 & \quantblank & 不回删信号池 \\
+公司行动与退市 & \quantconfirm & 标签和持仓职责分开 \\
+覆盖与失败原因 & \quantresult & 分母为冻结信号池 \\
+人工边界样本 & \quantblank & 周末、节假日、生效前后、不可成交 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子定义卡模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.8cm}p{6.2cm}p{5.2cm}@{}}
+\caption{因子定义卡模板}\label{tab:appC-factor-definition}\\
+\toprule
+字段 & 填写内容 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 填写内容 & 审计要求 \\
+\midrule
+\endhead
+\texttt{factor\_name} & \quantblank & 与假设卡一致 \\
+经济含义 & \quantblank & 不等同于有效性结论 \\
+数学公式 & \quantblank & 所有符号有定义 \\
+预期方向 / \texttt{direction\_sign} & \quantblank & 实验前冻结 \\
+输入概念字段 & \quantconfirm & 不写死未知供应商字段 \\
+输入最晚可得时点 & \quantconfirm & 不晚于信号截止 \\
+回看窗口与最小历史 & \quantconfirm & 交易日日历明确 \\
+单位与缩放 & \quantconfirm & 分子分母可比 \\
+有效条件 & \quantblank & 数值有限且定义合法 \\
+无效原因与优先级 & \quantblank & 不由代码顺序偶然决定 \\
+风险标记 & \quantblank & 与无效原因分开 \\
+输出 schema & \quantblank & 原始值、状态、血缘和版本 \\
+\texttt{factor\_version} / \texttt{config\_version} & \quantblank & 变化不覆盖历史 \\
+人工手算样本 & \quantblank & 输入、步骤、预期、实际与差异 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{因子预处理配置模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.8cm}p{6.2cm}p{5.2cm}@{}}
+\caption{因子预处理配置模板}\label{tab:appC-preprocess-config}\\
+\toprule
+配置项 & 填写内容 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+配置项 & 填写内容 & 审计要求 \\
+\midrule
+\endhead
+输入因子版本 & \quantblank & 冻结原始值与有效状态 \\
+截面分组键 & \texttt{signal\_date + factor\_name} & 不跨日期共享统计量 \\
+缺失处理 & \quantblank & 默认不以零冒充未知 \\
+缩尾方法与参数 & \quantconfirm & MAD/替代方案、小样本和退化规则 \\
+方向统一 & \quantblank & 来自定义卡 \\
+尺度方法 & \quantconfirm & z-score/排名及并列规则 \\
+行业内处理 & \quantconfirm & 行业版本、小行业降级 \\
+残差化 & \quantconfirm & 暴露、权重、秩与容差 \\
+输出字段 & \quantblank & 原值、处理值、参数和状态并存 \\
+\texttt{preprocess\_version} & \quantblank & 方法变化生成新版本 \\
+阶段状态 & \quantresult & 不静默降级 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{单因子报告模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{3.2cm}p{3.0cm}p{3.2cm}p{3.0cm}p{3.0cm}@{}}
+\caption{单因子报告模板}\label{tab:appC-single-factor-report}\\
+\toprule
+证据维度 & 主指标/对象 & 结果 & 状态 & 解释与限制 \\
+\midrule
+\endfirsthead
+\toprule
+证据维度 & 主指标/对象 & 结果 & 状态 & 解释与限制 \\
+\midrule
+\endhead
+输入身份 & 因子、预处理、股票池、标签版本 & \quantdash & \quantresult & \quantblank \\
+覆盖 & 因子覆盖、可评价覆盖 & \quantdash & \quantresult & \quantblank \\
+预测方向 & IC、RankIC 逐期与分期 & \quantdash & \quantresult & \quantblank \\
+分组结构 & 各组标签与单调性 & \quantdash & \quantresult & \quantblank \\
+时间稳定性 & 异常期、方向一致性 & \quantdash & \quantresult & \quantblank \\
+暴露 & 行业、市值、流动性、波动 & \quantdash & \quantresult & \quantblank \\
+信号持续性 & 因子自相关、排名变化 & \quantdash & \quantresult & \quantblank \\
+换手 & 顶部分组与因子换手 & \quantdash & \quantresult & \quantblank \\
+成本压力 & 单边敏感性、不可成交、集中度 & \quantdash & \quantresult & \quantblank \\
+版本比较 & 原始、主基线、预注册敏感性 & \quantdash & \quantresult & \quantblank \\
+阶段决定 & 继续、返工、停止或证据不足 & \quantdash & \quantresult & \quantblank \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{稳健性实验登记模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{3.8cm}p{6.2cm}p{5.2cm}@{}}
+\caption{稳健性实验登记模板}\label{tab:appC-robustness-ledger}\\
+\toprule
+字段 & 填写内容 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 填写内容 & 审计要求 \\
+\midrule
+\endhead
+\texttt{experiment\_id} & \quantblank & 唯一、追加写入 \\
+\texttt{hypothesis\_id} & \quantblank & 回到冻结假设 \\
+因子/预处理/股票池/标签版本 & \quantblank & 不从历史结果重选 \\
+\texttt{sample\_split} & \quantconfirm & 时间顺序和缓冲 \\
+\texttt{parameter\_changes} & \quantblank & 仅预注册候选 \\
+\texttt{reason\_before\_run} & \quantblank & 看到本次结果前填写 \\
+\texttt{code\_commit} / \texttt{data\_version} & \quantblank & 可重放输入 \\
+测试/留出访问次数 & \quantdash & 每次查看留痕 \\
+运行状态 & \quantresult & 失败和不足也登记 \\
+结果位置 & \quantblank & 不覆盖旧结果 \\
+阶段决定 & \quantresult & 依据冻结规则 \\
+复核备注 & \quantblank & 异议、适用边界和责任人 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{多因子冗余与消融模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{3.1cm}p{3.0cm}p{3.0cm}p{3.0cm}p{3.3cm}@{}}
+\caption{多因子冗余与消融模板}\label{tab:appC-redundancy-ablation}\\
+\toprule
+检查对象 & 因子/组合版本 & 共同样本 & 状态 & 结果、解释与限制 \\
+\midrule
+\endfirsthead
+\toprule
+检查对象 & 因子/组合版本 & 共同样本 & 状态 & 结果、解释与限制 \\
+\midrule
+\endhead
+候选资格 & \quantblank & \quantdash & \quantresult & \quantblank \\
+单因子覆盖 & \quantblank & \quantdash & \quantresult & \quantblank \\
+两两与共同覆盖 & \quantblank & \quantdash & \quantresult & \quantblank \\
+经济逻辑冗余 & \quantblank & \quantdash & \quantresult & \quantblank \\
+数据来源冗余 & \quantblank & \quantdash & \quantresult & \quantblank \\
+逐期数值相关 & \quantblank & \quantdash & \quantresult & \quantblank \\
+共同暴露 & \quantblank & \quantdash & \quantresult & \quantblank \\
+条件分组 & \quantblank & \quantdash & \quantresult & \quantblank \\
+留一消融 & \quantblank & \quantdash & \quantresult & \quantblank \\
+正式因子集合与等权综合分 & \quantblank & \quantdash & \quantresult & \quantblank \\
+\texttt{combination\_version} & \quantblank & \quantdash & \quantresult & \quantblank \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{目标组合约束报告模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{3.1cm}p{3.0cm}p{3.0cm}p{3.0cm}p{3.3cm}@{}}
+\caption{目标组合约束报告模板}\label{tab:appC-portfolio-constraints}\\
+\toprule
+对象/约束 & 配置或输入版本 & 检查结果 & 状态 & 调整、降级与备注 \\
+\midrule
+\endfirsthead
+\toprule
+对象/约束 & 配置或输入版本 & 检查结果 & 状态 & 调整、降级与备注 \\
+\midrule
+\endhead
+综合分输入 & \quantblank & \quantdash & \quantresult & \quantblank \\
+候选数量与并列 & \quantblank & \quantdash & \quantresult & \quantblank \\
+基础权重 & \quantblank & \quantdash & \quantresult & \quantblank \\
+个股上下限 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+行业约束 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+流动性约束 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+换手预算 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+持仓缓冲 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+现金权重 & \quantdash & \quantdash & \quantresult & \quantblank \\
+约束优先级与降级轨迹 & \quantblank & \quantdash & \quantresult & \quantblank \\
+\texttt{portfolio\_version} & \quantblank & \quantdash & \quantresult & \quantblank \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{订单、成交、持仓与现金核对模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{2.3cm}p{2.3cm}p{2.5cm}p{2.5cm}p{2.3cm}p{2.4cm}@{}}
+\caption{订单、成交、持仓与现金核对模板}\label{tab:appC-ledger-reconciliation}\\
+\toprule
+对象/主键 & 期初或请求 & 事件/成交 & 期末或未成交 & 状态 & 差异/备注 \\
+\midrule
+\endfirsthead
+\toprule
+对象/主键 & 期初或请求 & 事件/成交 & 期末或未成交 & 状态 & 差异/备注 \\
+\midrule
+\endhead
+\texttt{order\_id}: \quantblank & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+\texttt{fill\_id}: \quantblank & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+证券数量 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+买入现金流 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+卖出现金流 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+显性费用 & \quantconfirm & \quantdash & \quantdash & \quantresult & \quantblank \\
+滑点与冲击 & \quantconfirm & \quantdash & \quantdash & \quantresult & \quantblank \\
+公司现金流 & \quantconfirm & \quantdash & \quantdash & \quantresult & \quantblank \\
+现金余额 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+实际权重 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+目标—实际偏差 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+证券与现金守恒 & \quantdash & \quantdash & \quantdash & \quantresult & \quantblank \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{含成本回测摘要模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{3.1cm}p{3.0cm}p{3.0cm}p{3.0cm}p{3.3cm}@{}}
+\caption{含成本回测摘要模板}\label{tab:appC-backtest-summary}\\
+\toprule
+摘要对象 & 版本/口径 & 结果 & 状态 & 解释与限制 \\
+\midrule
+\endfirsthead
+\toprule
+摘要对象 & 版本/口径 & 结果 & 状态 & 解释与限制 \\
+\midrule
+\endhead
+研究区间与日历 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+股票池、标签与基准 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+组合与执行版本 & \quantblank & \quantdash & \quantresult & \quantblank \\
+毛收益 & \quantdash & \quantdash & \quantresult & \quantblank \\
+显性费用、滑点、冲击 & \quantconfirm & \quantdash & \quantresult & \quantblank \\
+净收益 & \quantdash & \quantdash & \quantresult & \quantblank \\
+波动、最大回撤、Sharpe & \quantdash & \quantdash & \quantresult & \quantblank \\
+超额收益、跟踪误差、IR & \quantdash & \quantdash & \quantresult & \quantblank \\
+四类换手 & \quantdash & \quantdash & \quantresult & \quantblank \\
+未成交、现金和目标—实际偏差 & \quantdash & \quantdash & \quantresult & \quantblank \\
+风险与失败模式 & \quantblank & \quantdash & \quantresult & \quantblank \\
+\texttt{backtest\_version} & \quantblank & \quantdash & \quantresult & \quantblank \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{最终研究结论模板}
+
+\begingroup
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{4.0cm}p{7.0cm}p{4.2cm}@{}}
+\caption{最终研究结论模板}\label{tab:appC-final-conclusion}\\
+\toprule
+结论部分 & 填写内容 & 核对要求 \\
+\midrule
+\endfirsthead
+\toprule
+结论部分 & 填写内容 & 核对要求 \\
+\midrule
+\endhead
+1. 观察事实 & \quantblank & 仅写冻结输出可直接支持的事实 \\
+2. 基于事实的推断 & \quantblank & 说明推断链和替代解释 \\
+3. 尚待验证的假设 & \quantblank & 不把未知项写成事实 \\
+4. 主要限制 & \quantblank & 数据、样本、执行、成本和方法限制 \\
+5. 适用边界 & \quantconfirm & 股票池、时点、容量和制度边界 \\
+6. 阶段决定 & \quantresult & 支持、带条件支持、不支持或证据不足 \\
+7. 下一步行动 & \quantblank & 与当前证据和停止条件一致 \\
+8. 责任人与复核状态 & \quantconfirm / \quantresult & 不虚构人工核验完成 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{人工穿行核对模板}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{longtable}{@{}p{2.2cm}p{2.2cm}p{2.5cm}p{2.5cm}p{2.2cm}p{2.7cm}@{}}
+\caption{人工穿行核对模板}\label{tab:appC-manual-walkthrough}\\
+\toprule
+步骤/对象 & 主键与版本 & 预期输入/状态 & 手算或预期结果 & 程序结果 & 差异、责任人与结论 \\
+\midrule
+\endfirsthead
+\toprule
+步骤/对象 & 主键与版本 & 预期输入/状态 & 手算或预期结果 & 程序结果 & 差异、责任人与结论 \\
+\midrule
+\endhead
+点时字段连接 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+历史股票池与过滤 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+标签窗口 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+原始因子 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+预处理截面 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+单因子评价 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+综合分 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+目标组合与期望交易 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+订单、成交与持仓 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+现金、成本与收益 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+最终证据与阶段决定 & \quantblank & \quantconfirm & \quantdash & \quantdash & \quantresult \\
+\bottomrule
+\end{longtable}
+\endgroup
