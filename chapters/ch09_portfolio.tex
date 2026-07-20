@@ -1,5 +1,636 @@
 \chapter{从综合得分到约束型多头组合}
+\label{ch:portfolio}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:factor-combination} 已经输出唯一冻结的 \texttt{combination\_version}、证券层面综合得分、共同样本状态和适用条件。本章把这份横截面排序信息转化为信号日结束后“希望持有”的多头目标权重，并生成相对上一期实际持仓的期望交易差额。核心问题是：\keyterm{如何在不偷看下一交易日的前提下，让目标组合既表达综合分，又满足基础约束并可被完整审计？}
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 区分综合得分、目标组合、期望订单、实际成交和实际持仓；
+  \item 用冻结的固定数量规则和确定性并列规则构造候选集合；
+  \item 从基础等权出发，依次处理个股、行业、流动性和换手约束；
+  \item 解释持仓缓冲、现金权重与目标换手的作用和边界；
+  \item 在约束冲突时执行预注册、确定性的降级流程；
+  \item 输出可追溯的目标权重、期望交易差额、约束状态和组合版本；
+  \item 为第 10 章保留目标与实际之间的差异，而不提前模拟成交。
+\end{enumerate}
+
+\begin{principlebox}
+\textbf{[通用原则]} 下一交易日无法成交不能反向改变信号日综合分、候选名单或原始目标权重。未成交和实际持仓偏离应由第 10 章的订单、成交与持仓账本处理。
+\end{principlebox}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=2.5mm,
+    every node/.style={font=\footnotesize},
+    quantPortfolioScore/.style={quantBlueCard, text width=2.15cm, minimum height=1.15cm, align=center},
+    quantPortfolioCandidate/.style={quantCard, text width=2.15cm, minimum height=1.15cm, align=center},
+    quantPortfolioBase/.style={quantCard, text width=2.15cm, minimum height=1.15cm, align=center},
+    quantPortfolioConstraint/.style={quantOrangeCard, text width=2.15cm, minimum height=1.15cm, align=center},
+    quantPortfolioTarget/.style={quantGreenCard, text width=2.15cm, minimum height=1.15cm, align=center},
+    quantPortfolioTrade/.style={quantBlueCard, text width=2.15cm, minimum height=1.15cm, align=center}
+  ]
+    \node[quantPortfolioScore] (score) {冻结综合分};
+    \node[quantPortfolioCandidate, right=of score] (candidate) {候选集合};
+    \node[quantPortfolioBase, right=of candidate] (base) {基础等权};
+    \node[quantPortfolioConstraint, right=of base] (constraint) {个股、行业、流动性、换手};
+    \node[quantPortfolioTarget, right=of constraint] (target) {目标权重与现金};
+    \node[quantPortfolioTrade, right=of target] (trade) {期望交易差额};
+
+    \draw[quantArrow] (score) -- (candidate);
+    \draw[quantArrow] (candidate) -- (base);
+    \draw[quantArrow] (base) -- (constraint);
+    \draw[quantArrow] (constraint) -- (target);
+    \draw[quantArrow] (target) -- (trade);
+  \end{tikzpicture}
+  \caption{从冻结综合分到期望交易差额的规则型流程（结构示意）}
+  \label{fig:ch09-portfolio-flow}
+\end{figure}
+
+本章不判断下一交易日真实成交，不处理停牌、价格限制、部分成交、正式交易成本、实际持仓更新或组合收益。这些全部留给第 10 章。
+
+\section{为什么综合得分不是持仓}
+
+\texttt{combined\_score} 只表达证券在冻结因子体系下的相对优先级，没有资金单位，也没有自动包含行业、流动性、换手和个股集中度。把分数直接归一化为权重，可能产生负权重、集中于少数证券，或让某一共同暴露被放大。
+
+目标权重是一项带约束的决策。它既要尽可能保留排序信息，又要接受可行性边界。约束可能削弱原始信号表达；这种损失应通过基础权重、每一步调整和最终状态被记录，而不是隐藏在一个最终权重字段中。
+
+\section{综合分、目标权重、订单和实际持仓的区别}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{五类对象的职责与时间边界}
+  \label{tab:ch09-object-responsibilities}
+  \begin{tabularx}{\textwidth}{p{2.7cm} p{4.5cm} p{3.2cm} Y}
+    \toprule
+    对象 & 表达含义 & 形成时点 & 本章是否生成 \\
+    \midrule
+    综合得分 & 证券横截面排序信息 & 信号日数据冻结后 & 读取，不改写 \\
+    目标组合 & 信号日后希望持有的权重 & 约束构建完成后 & 是 \\
+    期望订单 & 目标与上一期实际持仓之差 & 目标权重确定后 & 是，仅目标差额 \\
+    实际成交 & 下一交易日真实执行结果 & 交易状态与价格可得后 & 否 \\
+    实际持仓 & 成交后真实持有状态 & 成交账本更新后 & 否 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+期望交易为正表示希望增加，为负表示希望减少，为零表示目标不变，但都不代表已成交。若卖单在下一交易日无法成交，旧持仓仍保留在实际账本中；不能因目标权重为零就让它凭空消失。
+
+\section{本章冻结输入和禁止访问的数据}
+
+本章只读取第 8 章冻结的 \texttt{combination\_version} 及其 \texttt{signal\_date}、\texttt{security\_id}、\texttt{combined\_score}、\texttt{joint\_valid} 和 \texttt{applicability\_conditions}；同时读取 \cref{ch:universe-labels} 的信号日股票池、信号日点时行业、市值与历史流动性，以及上一期实际持仓或期初快照。
+
+禁止访问的字段包括 \texttt{execution\_status}、\texttt{filled}、\texttt{execution\_price}、\texttt{limit\_status}、\texttt{next\_day\_suspension}、\texttt{future\_return} 和 \texttt{backtest\_result}。若输入表意外携带这些字段，目标构建应立即失败，而不是简单忽略后继续运行。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 真实资金规模、基准行业权重、行业偏离、参与率、个股上限、持股数量、换手预算和持仓快照截止时点必须由版本化配置确认。本章不虚构团队阈值。
+\end{confirmbox}
+
+\section{从综合分到候选集合}
+
+在信号日 \(t\)，先保留 \texttt{joint\_valid = True} 且满足冻结适用条件的证券，再按 \texttt{combined\_score} 从高到低排序。教学主基线使用预注册的固定数量 \(N\)，候选集合可写为
+
+\begin{equation}
+  C_t
+  = \operatorname{TopN}_{i\in U_t^{\mathrm{eligible}}}
+    \left(\operatorname{combined\_score}_{i,t};N\right).
+  \label{eq:ch09-candidate-set}
+\end{equation}
+
+并列时依次使用冻结得分、预注册的次级排序字段和稳定证券主键。稳定主键只用于确定性打破并列，不表达经济偏好。每条记录都保存 \texttt{score\_rank}、\texttt{selected} 与 \texttt{selection\_reason}，未入选记录仍保留。
+
+\section{固定数量与固定分位入选规则}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{固定数量与固定分位规则的比较}
+  \label{tab:ch09-selection-rules}
+  \begin{tabularx}{\textwidth}{p{2.6cm} Y Y}
+    \toprule
+    比较项 & 固定数量 & 固定分位 \\
+    \midrule
+    持股数量 & 较稳定，便于解释与审计 & 随有效股票池规模变化 \\
+    信号池变化 & 入选比例随池规模变化 & 入选比例相对稳定 \\
+    小样本风险 & 候选不足时直接返回状态 & 分位边界和取整更敏感 \\
+    并列处理 & 第 \(N\) 名附近需确定性规则 & 分位阈值附近需确定性规则 \\
+    本章角色 & 教学主基线 & 预注册敏感性方案 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+持股数量必须在查看第 10 章正式回测前冻结。不能依据净收益、成本后表现或成交成功率在两种规则之间择优。
+
+\section{基础等权组合}
+
+设候选集合为 \(C_t\)，约束前基础权重为
+
+\begin{equation}
+  w^{\mathrm{base}}_{i,t}
+  =
+  \begin{cases}
+    1/|C_t|, & i\in C_t,\\
+    0, & i\notin C_t.
+  \end{cases}
+  \label{eq:ch09-base-weight}
+\end{equation}
+
+基础等权只是可审计起点，不是最终目标。即使某只证券得分特别高，也不能临时提高其基础权重。本章既不重新优化第 8 章因子权重，也不覆盖 \texttt{combined\_score}；基础和最终权重必须分列保存。
+
+\section{个股最大权重}
+
+多头、不加杠杆和个股上限可写为
+
+\begin{align}
+  w_{i,t} &\ge 0, \\
+  \sum_i w_{i,t} &\le 1, \\
+  w_{i,t} &\le w_{\max}.
+  \label{eq:ch09-long-cap}
+\end{align}
+
+\(w_{\max}\) 来自冻结配置。若基础等权已经超过上限，说明候选数量和约束不能同时充分投资。截断超限权重后，任何重新分配都必须再次检查上限；不能先截断，再无条件归一化到 1，导致原本合格的证券重新超限。
+
+\section{行业偏离约束}
+
+令 \(g(i,t)\) 为信号日已生效的历史行业，组合行业权重为
+
+\begin{equation}
+  W_{g,t}=\sum_{i:g(i,t)=g}w_{i,t}.
+  \label{eq:ch09-industry-weight}
+\end{equation}
+
+若存在信号日可得的基准行业权重 \(b_{g,t}\)，则可要求
+
+\begin{equation}
+  \left|W_{g,t}-b_{g,t}\right|\le \delta_g.
+  \label{eq:ch09-industry-deviation}
+\end{equation}
+
+历史行业和基准版本都不得晚于信号日。若没有可靠历史基准权重，可采用预注册行业配额或行业内选股作为教学替代，但必须使用独立约束版本。行业约束可能削弱高分证券的表达，这是需要报告的约束代价。
+
+\section{流动性约束}
+
+流动性只能使用信号日前已可得的历史代理。一般目标名义金额上限可写为
+
+\begin{equation}
+  \operatorname{TargetNotional}_{i,t}
+  \le
+  \operatorname{ParticipationCap}
+  \times
+  \operatorname{HistoricalLiquidity}_{i,t}.
+  \label{eq:ch09-liquidity-cap}
+\end{equation}
+
+历史窗口必须截止于信号日。资金规模、参与率、价格与成交额口径需实际确认。本章只把代理转换为目标权重上限；下一交易日是否真的成交由第 10 章处理，不能使用下一交易日成交量或不可买状态反向限制目标。
+
+\section{换手预算}
+
+设上一期实际证券权重为 \(h^-_{i,t}\)，目标权重为 \(w_{i,t}\)。教学口径的单边目标换手定义为
+
+\begin{equation}
+  \operatorname{Turnover}^{\mathrm{target}}_t
+  = \frac{1}{2}\sum_i\left|w_{i,t}-h^-_{i,t}\right|.
+  \label{eq:ch09-target-turnover}
+\end{equation}
+
+上一期实际持仓在信号日是已知状态，可以作为输入；目标换手不是实际成交换手。若超过冻结预算 \(B_t\)，可按固定比例收缩目标变化或保留部分旧持仓，随后重新检查个股、行业和流动性硬约束。下一交易日未成交信息不能改变本章目标换手。
+
+\section{持仓缓冲与进入/退出阈值}
+
+缓冲区让新证券只有进入更高阈值才买入，让已持有证券只有跌出较低阈值才退出；进入阈值高于退出阈值，可减少边界附近反复交易。缓冲会让目标组合依赖上一期实际持仓，但这不是未来信息。
+
+缓冲参数必须在回测前冻结，并比较加入前后的信号表达、目标换手和集中度。本章将其作为可选教学方案，不作为主基线。不能根据第 10 章的换手和净收益反复调整阈值。
+
+\section{现金权重}
+
+证券目标权重之和不必在不可行时强制等于 1。现金权重定义为
+
+\begin{equation}
+  w^{\mathrm{cash}}_t=1-\sum_i w_{i,t},\qquad w^{\mathrm{cash}}_t\ge 0.
+  \label{eq:ch09-cash-weight}
+\end{equation}
+
+现金是约束后的合法结果，不是自动报错。若个股、行业、流动性或换手限制阻止充分投资，应增加现金并记录 \texttt{PARTIAL\_ALLOCATION}，而不是放宽硬约束或强行归一化。
+
+\section{多项约束的优先级}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{规则型组合构建的约束优先级}
+  \label{tab:ch09-priority}
+  \begin{tabularx}{\textwidth}{p{1.4cm} p{4.6cm} Y}
+    \toprule
+    优先级 & 约束或目标 & 违反时处理 \\
+    \midrule
+    1 & 数据、主键和版本合法 & 立即失败，不生成目标 \\
+    2 & 不做空、不加杠杆 & 硬约束，不放宽 \\
+    3 & 个股权重上限 & 缩减并再次验证 \\
+    4 & 已确认行业约束 & 按固定顺序补充或缩减 \\
+    5 & 已确认流动性上限 & 降低目标，不使用未来成交数据 \\
+    6 & 换手预算 & 比例收缩或保留旧持仓 \\
+    7 & 尽可能表达综合分排序 & 在硬约束可行域内执行 \\
+    8 & 充分投资 & 不能压倒更高优先级约束 \\
+    9 & 剩余部分持有现金 & 记录部分配置状态 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+同时适用的基础约束汇总见 \cref{tab:ch09-constraint-summary}。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{个股、行业、流动性和换手约束摘要}
+  \label{tab:ch09-constraint-summary}
+  \begin{tabularx}{\textwidth}{p{2.5cm} p{4.0cm} p{3.6cm} Y}
+    \toprule
+    约束 & 信号日输入 & 目标检查 & 禁止使用 \\
+    \midrule
+    个股 & 冻结 \(w_{\max}\) & 每只证券目标权重 & 历史收益择优上限 \\
+    行业 & 点时行业、点时基准或配额 & 行业权重与偏离 & 未来行业或基准版本 \\
+    流动性 & 信号日前历史代理与资金规模 & 目标名义金额上限 & 下一日成交量和成交状态 \\
+    换手 & 上一期实际持仓、冻结预算 & 目标差额口径 & 实际成交或未成交信息 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{约束冲突、不可行与确定性降级}
+
+约束冲突不能靠随机删股或静默放宽解决。所有降级动作都要按配置顺序执行，并记录输入状态、触发原因、调整前后权重和仍未满足的约束。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=4mm,
+    every node/.style={font=\small},
+    quantPortfolioDecision/.style={diamond, aspect=2.4, draw=WarmOrange, fill=WarmOrange!8, align=center, inner sep=2pt},
+    quantPortfolioAction/.style={quantCard, text width=7.2cm, minimum height=0.9cm, align=center},
+    quantPortfolioSuccess/.style={quantGreenCard, text width=7.2cm, minimum height=0.9cm, align=center},
+    quantPortfolioFailure/.style={quantOrangeCard, text width=7.2cm, minimum height=0.9cm, align=center}
+  ]
+    \node[quantPortfolioDecision] (feasible) {全部硬约束可行？};
+    \node[quantPortfolioSuccess, below left=7mm and 20mm of feasible] (success) {是：冻结目标权重与约束报告};
+    \node[quantPortfolioAction, below right=7mm and 20mm of feasible] (reduce) {否：按高分顺序补充或缩减超限权重};
+    \node[quantPortfolioAction, below=of reduce] (turnover) {按冻结规则收缩换手并保留必要旧持仓};
+    \node[quantPortfolioAction, below=of turnover] (cash) {无法充分分配的部分转为现金};
+    \node[quantPortfolioDecision, below=of cash] (recheck) {重新验证硬约束？};
+    \node[quantPortfolioSuccess, below left=7mm and 20mm of recheck] (partial) {通过：\texttt{PARTIAL\_ALLOCATION}};
+    \node[quantPortfolioFailure, below right=7mm and 20mm of recheck] (failed) {仍失败：\texttt{INFEASIBLE}};
+
+    \draw[quantArrow] (feasible) -- node[above left]{是} (success);
+    \draw[quantArrow] (feasible) -- node[above right]{否} (reduce);
+    \draw[quantArrow] (reduce) -- (turnover);
+    \draw[quantArrow] (turnover) -- (cash);
+    \draw[quantArrow] (cash) -- (recheck);
+    \draw[quantArrow] (recheck) -- node[above left]{是} (partial);
+    \draw[quantArrow] (recheck) -- node[above right]{否} (failed);
+  \end{tikzpicture}
+  \caption{约束不可行时的确定性降级决策树（结构示意）}
+  \label{fig:ch09-degradation-tree}
+\end{figure}
+
+允许的动作包括从下一名高分证券补充、缩减超限权重、按固定顺序重新分配、比例收缩交易、保留部分旧持仓和增加现金。任何动作后都必须重复验证高优先级硬约束。
+
+\section{目标权重与期望交易量}
+
+目标交易差额定义为
+
+\begin{equation}
+  \operatorname{desired\_trade\_weight}_{i,t}
+  = w_{i,t}-h^-_{i,t}.
+  \label{eq:ch09-desired-trade}
+\end{equation}
+
+正值表示期望增加，负值表示期望减少，零表示目标不变。若需要目标名义金额，可在冻结资金规模下转换，但仍不能称为已下单或已成交。本章不生成 \texttt{filled\_weight} 或 \texttt{actual\_holding\_after\_trade}。
+
+\section{组合约束检查与审计表}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{目标组合约束检查模板}
+  \label{tab:ch09-constraint-audit}
+  \begin{tabularx}{\textwidth}{p{3.2cm} p{3.1cm} p{3.1cm} Y}
+    \toprule
+    检查项 & 冻结限制 & 目标观察值 & 状态与降级记录 \\
+    \midrule
+    证券权重非负 & \(w_{i,t}\ge0\) & -- & -- \\
+    证券权重与现金 & 合计为 1 & -- & -- \\
+    最大个股权重 & \(w_{\max}\) & -- & -- \\
+    行业偏离 & \(\delta_g\) 或配额 & -- & -- \\
+    流动性上限 & 历史代理映射上限 & -- & -- \\
+    目标换手 & \(B_t\) & -- & -- \\
+    证券数量与覆盖 & 配置与状态规则 & -- & -- \\
+    组合版本 & 唯一且不可覆盖 & -- & -- \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+审计报告还应保存各行业权重及偏离、流动性覆盖、约束失败、每步重新分配、现金来源和最终 \texttt{portfolio\_status}。只保留最终权重会丢失约束如何影响信号的证据链。
+
+\section{一个匿名教学案例}
+
+\begin{casebox}
+\textbf{仅用于解释选股、权重和约束逻辑，不代表真实证券、真实数据库、真实投资组合或实证研究结果。}
+
+匿名信号日 \(t^\star\) 有九只证券，教学配置固定选择前四名。上一期证券权重合计为 0.80，现金为 0.20。案例使用匿名约束：个股上限、行业配额和流动性目标上限只为解释计算，不代表真实团队阈值。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c c r r c r}
+  \toprule
+  证券 & 行业 & 综合分 & 上期实际权重 & 前四名 & 约束提示 \\
+  \midrule
+  A & 甲 & 2.1 & 0.15 & 是 & 高分，受个股上限 \\
+  B & 甲 & 1.8 & 0.10 & 是 & 行业甲接近上限 \\
+  C & 乙 & 1.6 & 0.08 & 是 & 流动性目标上限较低 \\
+  D & 丙 & 1.2 & 0.12 & 是 & 个股上限 \\
+  E & 乙 & 0.9 & 0.10 & 否 & 退出目标 \\
+  F & 丙 & 0.7 & 0.08 & 否 & 退出目标 \\
+  G & 甲 & 0.4 & 0.07 & 否 & 退出目标 \\
+  H & 乙 & 0.1 & 0.05 & 否 & 退出目标 \\
+  I & 丙 & -0.2 & 0.05 & 否 & 退出目标 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+前四名的基础等权均为 0.25。确定性约束后，A 因个股上限降至 0.20；行业甲总额限制使 B 只能为 0.10；C 的历史流动性映射上限为 0.10；D 受个股上限约束为 0.20。证券目标权重合计 0.60，现金为 0.40。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c r r r r}
+  \toprule
+  证券 & 基础权重 & 上期实际权重 & 目标权重 & 期望交易差额 \\
+  \midrule
+  A & 0.25 & 0.15 & 0.20 & 0.05 \\
+  B & 0.25 & 0.10 & 0.10 & 0.00 \\
+  C & 0.25 & 0.08 & 0.10 & 0.02 \\
+  D & 0.25 & 0.12 & 0.20 & 0.08 \\
+  E & 0.00 & 0.10 & 0.00 & -0.10 \\
+  F & 0.00 & 0.08 & 0.00 & -0.08 \\
+  G & 0.00 & 0.07 & 0.00 & -0.07 \\
+  H & 0.00 & 0.05 & 0.00 & -0.05 \\
+  I & 0.00 & 0.05 & 0.00 & -0.05 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+\end{casebox}
+
+案例的目标单边换手按 \cref{eq:ch09-target-turnover} 为 0.25。表中目标权重和期望差额均不代表下一交易日实际结果；若某笔交易无法成交，第 10 章会保留旧实际持仓并记录偏离，而不是回写本表。
+
+\section{pandas 风格最小实现}
+
+\cref{lst:ch09-portfolio-builder} 展示规则型目标组合构建的职责边界。代码只生成目标和审计状态，不生成订单成交或回测结果。
+
+\begin{lstlisting}[
+  caption={约束型多头目标组合的最小接口},
+  label={lst:ch09-portfolio-builder}
+]
+FORBIDDEN_COLUMNS = {
+    "execution_status", "filled", "execution_price",
+    "limit_status", "next_day_suspension",
+    "future_return", "backtest_result", "orders", "fills",
+}
+
+def build_constrained_long_only_target(
+    frozen_scores,
+    signal_universe,
+    previous_actual_holdings,
+    portfolio_config,
+):
+    assert portfolio_config.combination_version_frozen
+    assert (
+        frozen_scores["combination_version"].unique().tolist()
+        == [portfolio_config.combination_version]
+    )
+    for frame in (
+        frozen_scores,
+        signal_universe,
+        previous_actual_holdings,
+    ):
+        assert FORBIDDEN_COLUMNS.isdisjoint(frame.columns)
+
+    assert_unique(frozen_scores, [
+        "security_id", "signal_date", "combination_version"
+    ])
+    validate_point_in_time_columns(
+        signal_universe,
+        asof_columns=[
+            "industry_asof", "benchmark_weight_asof",
+            "liquidity_window_end",
+        ],
+        not_after="signal_date",
+    )
+
+    conditions_met = evaluate_frozen_applicability_conditions(
+        frozen_scores["applicability_conditions"],
+        signal_universe,
+        asof="signal_date",
+    )
+    eligible = frozen_scores.loc[
+        frozen_scores["joint_valid"] & conditions_met
+    ].copy()
+    ranked = deterministic_rank(
+        eligible,
+        by=["combined_score", "security_id"],
+        ascending=[False, True],
+        tie_rule=portfolio_config.tie_rule,
+    )
+    selected = select_from_frozen_rule(
+        ranked,
+        method=portfolio_config.selection_method,
+        count=portfolio_config.fixed_count,
+    )
+    if selected.empty:
+        return append_infeasible_portfolio(
+            reason="NO_ELIGIBLE_CANDIDATE",
+            portfolio_version=hash_frozen_config(portfolio_config),
+        )
+    ranked["selected"] = ranked["security_id"].isin(
+        selected["security_id"]
+    )
+    ranked["base_weight"] = 0.0
+    ranked.loc[ranked["selected"], "base_weight"] = (
+        1.0 / len(selected)
+    )
+
+    state = build_portfolio_state_union(
+        ranked,
+        signal_universe,
+        previous_actual_holdings,
+        stable_key="security_id",
+        include_previous_only_holdings=True,
+    )
+    state = apply_optional_buffer(
+        state,
+        enabled=portfolio_config.buffer_enabled,
+        entry_rule=portfolio_config.entry_rule,
+        exit_rule=portfolio_config.exit_rule,
+    )
+    state = apply_individual_caps(
+        state, cap=portfolio_config.individual_cap
+    )
+    state = apply_industry_constraints(
+        state,
+        limits=portfolio_config.industry_limits,
+        deterministic_order=ranked["security_id"],
+    )
+    state = apply_liquidity_caps(
+        state,
+        capital=portfolio_config.capital,
+        participation_cap=portfolio_config.participation_cap,
+    )
+    state = redistribute_with_frozen_order(
+        state,
+        ranked=ranked,
+        allow_cash=True,
+    )
+    validate_hard_constraints(state)
+
+    state = shrink_to_turnover_budget(
+        state,
+        previous_weight="previous_actual_weight",
+        budget=portfolio_config.turnover_budget,
+        trace=True,
+    )
+    state = deterministic_degradation(
+        state,
+        priority=portfolio_config.constraint_priority,
+        allow_cash=True,
+        statuses=["PARTIAL_ALLOCATION", "INFEASIBLE"],
+    )
+    validate_hard_constraints(state)
+
+    state["target_weight"] = state["constrained_weight"]
+    state["desired_trade_weight"] = (
+        state["target_weight"]
+        - state["previous_actual_weight"]
+    )
+    cash_weight = 1.0 - state["target_weight"].sum()
+    assert (state["target_weight"] >= 0).all()
+    assert cash_weight >= 0
+    assert abs(state["target_weight"].sum() + cash_weight - 1) < 1e-12
+    assert FORBIDDEN_COLUMNS.isdisjoint(state.columns)
+
+    output = attach_portfolio_audit_fields(
+        state,
+        cash_weight=cash_weight,
+        portfolio_version=hash_frozen_config(portfolio_config),
+    )
+    portfolio_store.append_only(output)
+    return output
+\end{lstlisting}
+
+真实实现还应保证候选不足时不发生除零，并让所有降级步骤追加到审计表。复杂二次规划不是本章要求；规则型流程的价值在于每次调整都能重放和解释。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖：
+
+\begin{enumerate}
+  \item 非冻结 \texttt{combination\_version} 不能使用；
+  \item \texttt{joint\_valid = False} 的记录不能进入候选；
+  \item 相同证券、信号日和版本重复时失败；
+  \item 排序不能读取未来标签；
+  \item 并列处理确定且可重复；
+  \item 固定数量或固定分位规则严格来自配置；
+  \item 任一证券目标权重不得为负；
+  \item 证券目标权重与现金权重合计为 1；
+  \item 任一个股不得超过上限；
+  \item 重新分配后再次检查个股上限；
+  \item 历史行业区间覆盖信号日；
+  \item 基准行业权重版本不晚于信号日；
+  \item 流动性窗口不包含未来数据；
+  \item 下一交易日成交量或状态不得参与目标构建；
+  \item 目标换手与实际成交换手使用不同字段名；
+  \item 换手预算降级过程可追溯；
+  \item 无法充分投资时现金权重为正；
+  \item 不可行状态不能被静默忽略；
+  \item \texttt{target\_weight}、\texttt{desired\_trade\_weight} 与 \texttt{previous\_actual\_weight} 可相互还原；
+  \item 组合版本变化保留旧输出；
+  \item 相同输入、配置和版本得到相同结果；
+  \item 目标组合函数不能访问 \texttt{orders}、\texttt{fills}、\texttt{execution\_price} 或 \texttt{backtest\_result}。
+\end{enumerate}
+
+\begin{practicebox}
+\textbf{[正确实践]} 人工至少核对一个普通候选、一个并列边界、一个个股超限、一个行业受限、一个流动性受限、一个换手收缩和一个现金配置案例。逐项重算基础权重、每步约束、目标权重、期望差额和组合状态，并确认没有读取下一交易日字段。
+\end{practicebox}
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：把综合分直接当权重；根据第 10 章收益选择持股数量；使用下一交易日不可买状态重排信号日候选；用未来基准权重或行业分类；先截断个股权重再归一化导致重新超限；行业约束后不复查个股约束；为满仓违反流动性限制；把目标换手称为实际换手；把目标组合称为实际持仓；无法卖出时让旧持仓凭空消失；不可行时静默放宽约束；只保存最终权重而不保存基础权重和降级过程；把现金视为回测错误；以及使用组合结果回头修改第 8 章因子集合或权重。
+\end{warningbox}
+
+这些错误会把信号、决策和执行三层混在一起，使目标组合无法审计。正确修复是恢复时间边界和状态账本，不是借未来执行信息重写信号日决策。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：冻结候选规则与并列规则；基础等权；个股、行业、流动性和换手约束配置；缓冲方案状态；约束优先级和确定性降级记录；证券目标权重、期望交易差额与现金权重；组合约束检查；自动测试与人工核对结果；以及进入第 10 章的唯一冻结 \texttt{portfolio\_version}。
+\end{outputbox}
+
+\begingroup
+\small
+\begin{longtable}{@{}p{4.4cm}p{4.8cm}p{5.6cm}@{}}
+\caption{目标组合证券级输出 schema}\label{tab:ch09-output-schema}\\
+\toprule
+字段 & 含义 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 含义 & 审计要求 \\
+\midrule
+\endhead
+\texttt{security\_id}、\texttt{signal\_date} & 稳定主键与信号日 & 同一组合版本唯一 \\
+\texttt{combination\_version} & 第 8 章冻结综合分版本 & 不得重选历史版本 \\
+\texttt{portfolio\_version} & 目标组合版本 & 规则或约束变化即新版本 \\
+\texttt{combined\_score}、\texttt{score\_rank} & 冻结分数与确定性排名 & 权重不能覆盖分数 \\
+\texttt{selected}、\texttt{selection\_reason} & 入选状态与原因 & 未入选记录仍保留 \\
+\texttt{base\_weight} & 约束前等权起点 & 与候选数量一致 \\
+\texttt{previous\_actual\_weight} & 上一期实际证券权重 & 来自信号日已知快照 \\
+\texttt{target\_weight} & 约束后目标权重 & 非负且满足硬约束 \\
+\texttt{desired\_trade\_weight} & 目标减上期实际权重 & 不代表成交 \\
+\texttt{industry\_asof} & 点时行业 & 生效日不晚于信号日 \\
+\texttt{benchmark\_industry\_weight\_asof} & 点时基准行业权重 & 无可靠版本时使用登记替代 \\
+\texttt{liquidity\_proxy\_asof} & 历史流动性代理 & 窗口截止信号日 \\
+\texttt{individual\_cap} & 个股上限 & 来自冻结配置 \\
+\texttt{industry\_constraint\_status} & 行业约束状态 & 保存偏离与调整 \\
+\texttt{liquidity\_constraint\_status} & 流动性约束状态 & 不使用未来成交量 \\
+\texttt{turnover\_constraint\_status} & 换手预算状态 & 保存收缩轨迹 \\
+\texttt{portfolio\_status} & 成功、部分配置或不可行 & 不静默忽略失败 \\
+\texttt{cash\_weight} & 组合级现金权重 & 与证券权重合计为 1 \\
+\texttt{constraint\_version} & 约束配置版本 & 可重放优先级与降级 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+组合级汇总另保存证券目标权重总和、现金、目标换手、行业权重及偏离、最大个股权重、证券数量、流动性覆盖和所有失败/降级记录。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 综合得分、目标组合、期望订单、实际成交和实际持仓分别表示什么？
+  \item 为什么本章选择固定数量作为主基线，而固定分位只作敏感性方案？
+  \item 基础等权为什么不能直接称为最终目标权重？
+  \item 截断个股权重后为什么不能无条件归一化到满仓？
+  \item 行业与流动性数据的点时边界是什么？
+  \item 目标换手与实际成交换手为何必须分列？
+  \item 持仓缓冲如何降低交易，又引入了什么路径依赖？
+  \item 哪些情况下现金权重为正是合法结果？
+  \item 不可行时，确定性降级为何优于随机删股或静默放宽？
+  \item 进入第 10 章前必须冻结哪些版本、状态和审计记录？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 10 章《含成本回测与结果解释》的衔接}
+
+本章交付的是冻结目标组合与期望交易差额，不是下一交易日实际持仓。第 10 章将按事件顺序生成订单、判断停牌和价格限制、模拟成交、计算费用、更新实际持仓并解释目标偏离；它必须保留无法成交的旧持仓，不能回写本章候选或目标权重。
+
+交接包至少包含 \texttt{portfolio\_version}、证券目标权重、期望差额、现金、上一期实际持仓快照、约束状态、降级轨迹和点时数据版本。只有这些输入全部冻结后，才能开始含成本回测。
