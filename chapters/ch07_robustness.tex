@@ -1,5 +1,561 @@
 \chapter{稳健性、样本外与反过拟合}
+\label{ch:robustness}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:single-factor} 已经在冻结股票池、标签和因子版本上建立了覆盖率、预测力、暴露、换手与成本五维证据。本章不再寻找新的因子公式，而是追问：\keyterm{这些证据是否依赖某段样本、某个参数或研究者的选择？} 一个因子可以在全样本平均意义上表现整齐，却只在少数年份、单一股票池或某个孤立参数点成立；若研究者反复查看测试结果并据此改规则，“样本外”也会逐渐变成另一段样本内。
+
+稳健性检验的目标不是证明因子在任何条件下都有效，而是识别证据能够被复现的区域、明确适用边界，并诚实保留失败和证据不足。完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 按时间顺序区分训练、验证、测试和最终留出区间的职责；
+  \item 解释时间序列为何不能随机打乱后使用普通交叉验证；
+  \item 比较扩展窗口与滚动窗口的适用问题和局限；
+  \item 围绕冻结主配置设计少量预注册参数扰动；
+  \item 检查时间、行业、市值、流动性、股票池与事前市场状态子样本；
+  \item 识别参数平坦区域与单点尖峰之间的证据差异；
+  \item 用实验台账记录所有尝试、失败状态和测试集访问次数；
+  \item 汇总稳健性矩阵并给出冻结、带条件进入、返工、停止或证据不足的决定。
+\end{enumerate}
+
+\begin{principlebox}
+\textbf{[通用原则]} 看过测试结果后再修改参数，测试集就已经承担了验证集职责；最终留出集只有在研究设计完全锁定后才允许查看一次。任何重复查看都必须记录，不能通过更换名称恢复“未使用”状态。
+\end{principlebox}
+
+本章不进行新公式搜索、多因子合成、组合构建、正式策略回测、复杂机器学习交叉验证或大规模自动因子挖掘。进入第 8 章前，必须冻结最终因子版本；不能再根据第 8—10 章的组合结果回头挑选本章版本。
+
+\section{为什么稳定性比单次好结果更重要}
+
+单次好结果只能说明“在某个已经观察到的设置里出现了有利证据”，不能说明证据对轻微口径变化、时间推进或样本替换具有抵抗力。若一个窗口参数恰好产生较高 RankIC，而相邻合理参数全部退化，更可能反映噪声、数据边界或选择偏差，而不是清楚的经济机制。
+
+稳健性也不等于每个子样本必须同样优秀。行业结构、信息覆盖和市场环境会变化，因子可能存在合理适用边界。关键是边界能否由事前假设解释，失败区域是否完整披露，以及进入下一阶段的决定是否由冻结规则而非事后情绪产生。
+
+\begin{warningbox}
+只展示最佳参数、最佳起止日期和最有利股票池，会把研究者的搜索过程隐藏在最终表格之外。即使每个单独计算都没有代码错误，选择性汇报仍会系统性夸大证据。
+\end{warningbox}
+
+\section{样本内、验证集、测试集和最终留出集}
+
+时间划分应在运行稳健性检验前写入版本化配置。广义“样本内”是研究者反复用于形成方案的部分；本章进一步把它拆为训练区间和验证区间，以分开实现核对与有限选择。具体日期依赖真实研究区间，本讲义不凭空给出；只要求四段严格按时间排列、边界不重叠，并明确每一段可以做什么。\cref{fig:ch07-time-split} 展示一般顺序。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=2.5mm,
+    every node/.style={font=\small},
+    quantSplitTrain/.style={quantBlueCard, text width=3.0cm, minimum height=1.35cm, align=center},
+    quantSplitValidation/.style={quantCard, text width=3.0cm, minimum height=1.35cm, align=center},
+    quantSplitTest/.style={quantOrangeCard, text width=3.0cm, minimum height=1.35cm, align=center},
+    quantSplitHoldout/.style={quantGreenCard, text width=3.0cm, minimum height=1.35cm, align=center}
+  ]
+    \node[quantSplitTrain] (train) {训练区间\\建立基线与核对实现};
+    \node[quantSplitValidation, right=of train] (validation) {验证区间\\有限、预注册选择};
+    \node[quantSplitTest, right=of validation] (test) {测试区间\\评价冻结方案};
+    \node[quantSplitHoldout, right=of test] (holdout) {最终留出区间\\设计锁定后使用一次};
+
+    \draw[quantArrow] (train) -- (validation);
+    \draw[quantArrow] (validation) -- (test);
+    \draw[quantArrow] (test) -- (holdout);
+  \end{tikzpicture}
+  \caption{训练、验证、测试和最终留出集的时间顺序（结构示意，日期需实际确认）}
+  \label{fig:ch07-time-split}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{四类时间区间的职责与禁止事项}
+  \label{tab:ch07-split-roles}
+  \begin{tabularx}{\textwidth}{p{2.0cm} p{4.4cm} Y Y}
+    \toprule
+    区间 & 允许职责 & 不允许承担的职责 & 必须留痕 \\
+    \midrule
+    训练区间 & 建立基线、核对实现、形成初始假设 & 宣称最终样本外证据 & 起止边界、数据与代码版本 \\
+    验证区间 & 在预注册候选中做少量合理选择 & 无限增加候选并反复试参 & 候选清单、选择理由、查看次数 \\
+    测试区间 & 评价已经冻结的方案 & 看完结果后继续改参数或删样本 & 冻结时间、访问记录、完整结果 \\
+    最终留出区间 & 全部研究设计锁定后使用一次 & 当作普通测试集反复查看 & 唯一授权、访问次数、最终决定 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 四段的具体日期、最短长度、是否设置时间缓冲以及最终留出集的访问权限，均需根据实际研究区间、标签持有期、数据版本和团队治理流程确认。
+\end{confirmbox}
+
+\section{为什么时间序列不能随机打乱}
+
+普通随机划分会把较晚时期的记录放入训练区间，又把较早记录放入验证或测试区间。即使因子值本身满足点时要求，模型选择过程仍然看到了未来市场结构、覆盖率和分布信息。周度标签还可能跨越划分边界；若相邻信号的标签窗口重叠，随机打乱会进一步放大信息依赖。
+
+正确做法是按信号日排序后切分连续区间，并检查特征截止、标签起止和分割边界。若标签窗口跨越下一段起点，应按冻结规则设置间隔、归属或剔除状态，不能让同一未来区间同时支持参数选择和测试。随机种子不能修复时间语义错误。
+
+\begin{practicebox}
+\textbf{[正确实践]} 对每个区间断言信号日单调递增；前一区间结束早于后一区间开始；任何用于选择的标签终点不越过允许边界；原始数据顺序、切分后索引和标签窗口均可追溯。
+\end{practicebox}
+
+\section{扩展窗口与滚动窗口}
+
+扩展窗口从固定历史起点逐步增加新数据，观察累积证据是否随样本增加而保持方向。滚动窗口则只保留最近固定长度历史，更敏感于衰减和结构变化。设按时间排序的信号日为 \(t_1,\ldots,t_K\)，扩展窗口和长度为 \(W\) 的滚动窗口可分别写为
+
+\begin{align}
+  \mathcal{T}^{\mathrm{expand}}_k
+  &= \{t_1,\ldots,t_k\},
+  \label{eq:ch07-expanding-window}\\
+  \mathcal{T}^{\mathrm{roll}}_{k,W}
+  &= \{t_{k-W+1},\ldots,t_k\},\qquad k\ge W.
+  \label{eq:ch07-rolling-window}
+\end{align}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    x=0.92cm,
+    y=0.72cm,
+    every node/.style={font=\footnotesize},
+    quantExpandBlock/.style={draw=SoftBlue, fill=BlockBlue, rounded corners=2pt},
+    quantRollingBlock/.style={draw=WarmOrange, fill=WarmOrange!12, rounded corners=2pt}
+  ]
+    \foreach \x in {0,...,11} {
+      \draw[BaseGray!35] (\x,0) -- (\x,5.0);
+    }
+    \node[below] at (0,0) {早期};
+    \node[below] at (5.5,0) {时间推进};
+    \node[below] at (11,0) {近期};
+    \node[anchor=east] at (-0.25,4.25) {扩展 1};
+    \node[anchor=east] at (-0.25,3.45) {扩展 2};
+    \node[anchor=east] at (-0.25,2.65) {扩展 3};
+    \draw[quantExpandBlock] (0,4.0) rectangle (5,4.5);
+    \draw[quantExpandBlock] (0,3.2) rectangle (8,3.7);
+    \draw[quantExpandBlock] (0,2.4) rectangle (11,2.9);
+
+    \node[anchor=east] at (-0.25,1.55) {滚动 1};
+    \node[anchor=east] at (-0.25,0.75) {滚动 2};
+    \draw[quantRollingBlock] (2,1.3) rectangle (7,1.8);
+    \draw[quantRollingBlock] (6,0.5) rectangle (11,1.0);
+  \end{tikzpicture}
+  \caption{扩展窗口与滚动窗口的历史覆盖方式（结构示意，非实证结果）}
+  \label{fig:ch07-window-comparison}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{扩展窗口与滚动窗口的比较}
+  \label{tab:ch07-window-comparison}
+  \begin{tabularx}{\textwidth}{p{2.4cm} Y Y}
+    \toprule
+    比较项 & 扩展窗口 & 滚动窗口 \\
+    \midrule
+    训练信息量 & 随时间增加，早期数据始终保留 & 固定长度，旧数据逐步退出 \\
+    结构变化敏感度 & 较低，长期历史可能稀释近期变化 & 较高，更容易显示近期衰减 \\
+    起点依赖 & 对固定起点及早期异常较敏感 & 对窗口端点和局部事件较敏感 \\
+    窗口长度依赖 & 主要受最小起始样本影响 & 明显依赖 \(W\) 与推进步长 \\
+    计算成本 & 窗口逐步增长 & 多个固定窗口反复计算 \\
+    解释方式 & 累积证据是否收敛 & 局部证据是否变化或衰减 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+两者回答不同问题，没有一种永远更优。窗口长度、最小有效期数、推进频率和边界状态都必须预先登记。
+
+\section{冻结主配置与允许扰动的参数}
+
+主配置来自第 4—6 章已经冻结的因子公式、方向、预处理、股票池、标签和评价规则。参数扰动只允许围绕该基线构造少量、具有经济或实现理由的邻近版本，且列表必须在运行前冻结。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{三个教学因子与共同预处理的允许扰动范围}
+  \label{tab:ch07-preregistered-perturbations}
+  \begin{tabularx}{\textwidth}{p{2.3cm} p{4.4cm} Y Y}
+    \toprule
+    对象 & 可预注册的有限扰动 & 保持冻结 & 禁止动作 \\
+    \midrule
+    中期动量 & 长回看、短期跳过和最小历史观测数的邻近设定 & 经济逻辑、方向、价格点时规则 & 批量遍历窗口并按最高结果选取 \\
+    账面市值比 & 保守财务滞后、市值口径、原始与预注册对数版本 & 权益定义、点时可得性、方向 & 看结果后切换分子、分母或滞后 \\
+    ROE 类质量 & TTM 构造、可比权益期、小分母阈值的有限扰动 & 利润与权益语义、方向 & 用未来报告补齐或扩大参数组合 \\
+    共同预处理 & MAD 邻近阈值、z-score/排名、原始/行业内/残差版本 & 缺失规则、版本身份、当日截面边界 & 组合全部方法后只展示赢家 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+每项扰动都要有唯一配置版本、事前理由和预期影响。若新想法超出登记邻域，它不是本次敏感性点，而是新的研究假设，应重新登记并重新划分可用数据。
+
+\section{参数敏感性与尖峰风险}
+
+稳健参数通常表现为一个方向大体一致、指标平滑变化的合理区域，而不是只有一个参数点突出。平坦并不要求每个点数值相同；它要求轻微扰动不会让覆盖率、RankIC 方向、单调性或换手结论突然翻转。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      width=0.88\textwidth,
+      height=5.4cm,
+      axis lines=left,
+      xlabel={冻结基线附近的参数位置},
+      ylabel={相对证据强度（示意）},
+      xtick={-2,-1,0,1,2},
+      xticklabels={邻域--2,邻域--1,主基线,邻域+1,邻域+2},
+      ytick=\empty,
+      ymin=0,
+      ymax=1.15,
+      legend style={at={(0.5,1.02)},anchor=south,legend columns=2,draw=none},
+      tick label style={font=\scriptsize},
+      label style={font=\small}
+    ]
+      \addplot[color=SoftGreen, line width=1.4pt, mark=*]
+        coordinates {(-2,0.62) (-1,0.68) (0,0.72) (1,0.69) (2,0.63)};
+      \addlegendentry{合理平坦区域}
+      \addplot[color=WarmOrange, line width=1.4pt, mark=square*]
+        coordinates {(-2,0.22) (-1,0.28) (0,1.02) (1,0.25) (2,0.20)};
+      \addlegendentry{单点尖峰}
+    \end{axis}
+  \end{tikzpicture}
+  \caption{参数平坦区域与单点尖峰（纯结构示意，不代表实证结果）}
+  \label{fig:ch07-parameter-shape}
+\end{figure}
+
+参数尖峰应触发复核：检查小样本、端点日期、数据覆盖、并列值、极端观察和选择次数。正确动作不是立即采用尖峰，而是保留主基线、完整报告邻域，并根据预注册规则决定进入测试或给出证据不足。
+
+\section{时间子样本与滚动指标}
+
+时间子样本应在看结果前按研究问题定义，例如固定日历段、数据制度变化前后或预先登记的阶段。每段继续使用第 6 章相同的覆盖率、RankIC、分组单调性、暴露、换手和成本敏感性口径，避免因子在不同区间接受不同评分规则。
+
+滚动指标用于观察证据演变，但窗口之间高度重叠，不能把每个滚动点当作独立试验。报告应同时展示窗口有效期数、标签覆盖和失败状态；短窗口的剧烈波动可能只是估计不稳定。若衰减只在覆盖率断点附近出现，应先核查数据和股票池版本，再讨论经济失效。
+
+\section{行业、市值和股票池子样本}
+
+行业子样本回答信号是否由少数行业驱动；市值和流动性子样本回答证据是否只存在于某一交易特征区间；股票池替代则检验结论对基础池定义的依赖。所有子样本都必须使用信号日点时分类与预注册边界，并保留完整分母。
+
+子样本覆盖不足时应返回 \texttt{INSUFFICIENT\_SUBSAMPLE}，而不是计算伪精确指标。股票池替代不意味着可以使用当前成分回填历史；每个替代池都需要独立历史成分版本。某些行业或规模层不支持因子，并不自动否定全体证据，但必须进入适用边界和第 8 章版本说明。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 行业体系、市值与流动性分层、替代股票池、最小子样本数和历史成分版本均依赖实际数据。正文只冻结检查原则，不虚构具体阈值或指数名称。
+\end{confirmbox}
+
+\section{市场状态必须事前定义}
+
+“牛市有效”“压力期失效”等表述只有在状态定义不依赖因子结果时才可检验。事后观察曲线再为有利或不利区间命名，会把结果本身用于构造解释变量。市场状态应使用事前可计算、点时可得且与因子表现无关的规则，并在实验台账中保存定义版本。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{市场状态事前定义与事后命名的区别}
+  \label{tab:ch07-regime-definition}
+  \begin{tabularx}{\textwidth}{p{2.4cm} Y Y}
+    \toprule
+    比较项 & 事前定义 & 事后命名 \\
+    \midrule
+    定义时点 & 运行因子检验前冻结 & 看见因子或收益结果后形成 \\
+    输入 & 点时市场变量与固定规则 & 因子表现、回撤或有利图形 \\
+    边界 & 可由配置重放 & 随解释需要移动 \\
+    统计含义 & 可作为预注册子样本检查 & 只能作为探索性观察 \\
+    报告方式 & 与所有失败状态一起汇报 & 必须明确标为事后解释，不作确认性证据 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+稳健性不要求所有事前状态下同样强。若差异与经济机制一致且重复出现，可以形成带条件的适用边界；若状态定义来自结果本身，只能生成下一轮假设，不能回写本轮结论。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 市场状态所用变量、回看区间、阈值、边界日处理和版本生效时间必须结合实际研究区间与可得数据事前冻结；本章不指定真实日期，也不虚构团队阈值。
+\end{confirmbox}
+
+\section{持有期和标签口径敏感性}
+
+不同持有期回答不同预测问题，必须使用独立 \texttt{label\_version}，并重新核对信号截止、成交代理和标签端点。不能在同一标签列上改变名称，也不能因某个持有期表现更好就宣称原假设得到支持。
+
+本章只允许少量预注册持有期或标签代理，用于判断第 3 章主标签结论是否过度依赖单一设置。比较时同时报告覆盖率、重叠程度、RankIC、分组单调性和换手含义。更短持有期可能提高换手和成本压力，更长持有期可能产生标签重叠；二者都需要在解释中披露。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 主持有期、替代持有期、成交价格代理、重叠标签处理及公司行动口径依赖真实研究协议。任何替代标签都要单独版本化，不能覆盖第 3 章主标签。
+\end{confirmbox}
+
+\section{多重尝试、数据窥探和选择性汇报}
+
+每增加一个窗口、阈值、股票池或子样本，研究者就多了一次偶然发现有利结果的机会。若只保留最佳者，普通显著性直觉会过于乐观。即使本章不展开复杂多重检验方法，也必须记录假设家族、全部尝试和选择路径。
+
+数据窥探不仅发生在直接查看收益时。反复观察 RankIC、分组单调性、覆盖率或成本代理并据此改配置，同样会消耗样本外信息。失败、报错和证据不足都应保留；测试集和最终留出集的每次查看也必须进入台账。
+
+\begin{principlebox}
+\textbf{[通用原则]} 研究记录的基本单位是“所有尝试”，不是“最终保留的尝试”。删除失败实验会让后来复核者无法评估选择次数，也会让团队重复踩坑。
+\end{principlebox}
+
+\section{实验台账与配置冻结}
+
+实验台账应采用追加写入语义：旧记录不可覆盖，修复或新配置产生新的 \texttt{experiment\_id}。\cref{tab:ch07-experiment-ledger} 给出最小字段模板。
+
+\begingroup
+\small
+\begin{longtable}{@{}p{3.7cm}p{4.8cm}p{6.3cm}@{}}
+\caption{稳健性实验台账字段模板}\label{tab:ch07-experiment-ledger}\\
+\toprule
+字段 & 含义 & 最小审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 含义 & 最小审计要求 \\
+\midrule
+\endhead
+\texttt{experiment\_id} & 唯一实验编号 & 由冻结配置、代码与数据身份生成，不复用 \\
+\texttt{hypothesis\_id} & 研究假设编号 & 可追溯到原始登记 \\
+\texttt{factor\_name} & 因子名称 & 与定义卡一致 \\
+\texttt{factor\_version} & 因子公式版本 & 变更必须生成新实验 \\
+\texttt{preprocess\_version} & 预处理版本 & 原始、主基线或预注册敏感性 \\
+\texttt{universe\_version} & 股票池版本 & 包含历史成分与过滤规则 \\
+\texttt{label\_version} & 标签版本 & 持有期和价格代理独立版本化 \\
+\texttt{sample\_split} & 时间切分版本 & 记录四段边界与缓冲规则 \\
+\texttt{parameter\_changes} & 相对主基线变化 & 只允许预注册候选 \\
+\texttt{reason\_for\_change} & 运行理由 & 必须在看到本次结果前填写 \\
+\texttt{run\_time} & 运行时间 & 用于排序与审计，不替代数据时点 \\
+\texttt{code\_commit} & 代码提交 & 对应可复现源代码 \\
+\texttt{data\_version} & 数据快照 & 不得只写“最新数据” \\
+\texttt{status} & 成功、失败或证据不足 & 失败运行也必须入账 \\
+\texttt{result\_location} & 结构化结果位置 & 不覆盖旧结果 \\
+\texttt{decision} & 阶段决定 & 与冻结决策表一致 \\
+\texttt{reviewer\_note} & 复核备注 & 记录测试/留出访问次数和异议 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+配置冻结应覆盖公式、方向、数据版本、预处理、评价指标、样本切分、允许扰动、子样本和市场状态。只有明确的数据或实现错误才能触发返工；返工必须建立新实验链，不能覆盖旧结果。
+
+\section{稳健性矩阵}
+
+稳健性矩阵把各类检查放入同一报告结构，防止只展示最有利维度。表中所有单元格由实际运行生成；没有真实数据时保持为空并保留状态字段。
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{1.5pt}
+\begin{longtable}{@{}p{1.75cm}p{0.9cm}p{0.8cm}p{1.25cm}p{1.05cm}p{1.0cm}p{0.95cm}p{0.95cm}p{1.0cm}p{2.0cm}p{1.1cm}@{}}
+\caption{稳健性矩阵（结构模板，非实证结果）}\label{tab:ch07-robustness-matrix}\\
+\toprule
+检查行 & 覆盖率 & 有效期 & RankIC 方向与稳定性 & 单调性 & 暴露 & 因子换手 & 成本 & 失败状态 & 解释 & 是否支持进入下一阶段 \\
+\midrule
+\endfirsthead
+\toprule
+检查行 & 覆盖率 & 有效期 & RankIC 方向与稳定性 & 单调性 & 暴露 & 因子换手 & 成本 & 失败状态 & 解释 & 是否支持进入下一阶段 \\
+\midrule
+\endhead
+主基线 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+时间分期 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+扩展窗口 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+滚动窗口 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+参数邻域 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+股票池替代 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+行业子样本 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+市值子样本 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+流动性子样本 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+标签/持有期 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+原始/预处理 & -- & -- & -- & -- & -- & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+矩阵不要求所有行都标记“支持”。某些行可以显示明确适用边界、数据问题或证据不足；关键是决定与预注册规则一致，并解释失败是否来自时间、参数、覆盖、暴露或交易压力。
+
+\section{一个匿名教学案例}
+
+\begin{casebox}
+\textbf{仅用于解释研究纪律和决策过程，不代表真实证券、真实数据库或实证研究结果。}
+
+某匿名因子的主基线在训练区间与验证区间保持相同方向，覆盖状态也没有异常断点。预注册参数邻域包含主基线及少量相邻设置，其中一个参数点在验证区间异常突出，但其左右相邻点均不支持同样结论；另一个市值子样本因有效证券和有效期数不足，返回 \texttt{INSUFFICIENT\_SUBSAMPLE}。
+
+研究者不能选择孤立尖峰并把它带入测试。若主基线满足事前最低要求，正确做法是保留主基线、完整记录尖峰与覆盖不足，并进入一次冻结测试；若主基线本身证据较弱且关键子样本无法评价，则正确结论是“证据不足”，而不是扩大搜索范围。
+\end{casebox}
+
+这个案例没有提供真实日期、RankIC、收益或阈值。它展示的核心是决策顺序：先冻结候选与规则，再运行验证；尖峰只触发风险标记，不获得自动选择权；覆盖不足保留状态；测试集在最终方案冻结后才可访问。
+
+\section{Python 风格最小实现}
+
+\cref{lst:ch07-robustness-suite} 展示稳健性套件的职责边界。代码假设因子和标签已经由前章冻结，只编排预注册实验，不重新计算公式或自动选择最佳参数。
+
+\begin{lstlisting}[
+  caption={稳健性检验与追加式实验台账的最小接口},
+  label={lst:ch07-robustness-suite}
+]
+from hashlib import sha256
+
+FORBIDDEN_INPUTS = {
+    "combined_score", "portfolio_weight", "backtest_result"
+}
+
+def validate_time_splits(split_config):
+    names = ["train", "validation", "test", "holdout"]
+    intervals = [split_config[name] for name in names]
+    for interval in intervals:
+        assert interval["start"] < interval["end"]
+    for left, right in zip(intervals, intervals[1:]):
+        assert left["end"] < right["start"]
+    assert split_config["ordered"] is True
+    assert split_config["random_shuffle"] is False
+
+def make_experiment_id(spec, code_commit, data_version):
+    payload = canonical_json({
+        "spec": spec,
+        "code_commit": code_commit,
+        "data_version": data_version,
+    })
+    return sha256(payload.encode()).hexdigest()[:16]
+
+def run_robustness_suite(
+    frozen_factor,
+    frozen_labels,
+    split_config,
+    experiment_grid,
+):
+    assert FORBIDDEN_INPUTS.isdisjoint(frozen_factor.columns)
+    assert frozen_factor["definition_frozen"].all()
+    assert frozen_factor["direction_frozen"].all()
+    assert frozen_factor["preprocess_frozen"].all()
+    assert frozen_factor["signal_date"].is_monotonic_increasing
+    assert frozen_labels["signal_date"].is_monotonic_increasing
+    validate_time_splits(split_config)
+
+    assert experiment_grid["registry_frozen"] is True
+    assert experiment_grid["selection_splits"] == [
+        "train", "validation"
+    ]
+    assert "test" not in experiment_grid["selection_splits"]
+    assert "holdout" not in experiment_grid["selection_splits"]
+
+    ledger_rows = []
+    matrix_rows = []
+    for spec in experiment_grid["experiments"]:
+        experiment_id = make_experiment_id(
+            spec,
+            experiment_grid["code_commit"],
+            experiment_grid["data_version"],
+        )
+        assert not ledger_store.exists(experiment_id)
+
+        try:
+            assert spec["registered"] is True
+            assert spec["factor_version"] in \
+                experiment_grid["allowed_factor_versions"]
+            assert spec["parameter_changes"] in \
+                experiment_grid["allowed_perturbations"]
+            result = evaluate_frozen_spec_by_split(
+                frozen_factor,
+                frozen_labels,
+                split_config,
+                spec,
+                expose_splits=spec["authorized_splits"],
+            )
+            status = result["status"]
+            matrix_rows.extend(to_matrix_rows(result, spec))
+        except Exception as error:
+            status = "FAILED"
+            result = {"error_type": type(error).__name__}
+        finally:
+            ledger_rows.append(make_ledger_row(
+                experiment_id=experiment_id,
+                spec=spec,
+                status=status,
+                result=result,
+                test_access_count=audit.test_access_count,
+                holdout_access_count=audit.holdout_access_count,
+            ))
+
+    ledger_store.append_only(ledger_rows)
+    assert audit.holdout_access_count <= 1
+    return {
+        "ledger": ledger_rows,
+        "robustness_matrix": matrix_rows,
+        "frozen_candidates": freeze_by_registered_rules(
+            matrix_rows, experiment_grid["decision_rules"]
+        ),
+    }  # never select the historical best parameter automatically
+\end{lstlisting}
+
+\texttt{evaluate\_frozen\_spec\_by\_split} 必须复用第 6 章评价口径；\texttt{freeze\_by\_registered\_rules} 只能执行事前决策规则，不能按历史最高指标排序。实际实现还需让最终留出访问由独立审计状态控制，并在失败时也成功追加台账记录。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖：
+
+\begin{enumerate}
+  \item 样本区间顺序错误或任意重叠时失败；
+  \item 输入信号日被随机打乱或不单调时失败；
+  \item 测试集进入参数选择函数时失败；
+  \item 最终留出集被重复访问时记录并失败；
+  \item 未登记参数或配置不得运行；
+  \item 因子、标签、股票池或预处理版本变化必须生成新实验编号；
+  \item 既有 \texttt{experiment\_id} 不得被覆盖；
+  \item 失败、报错和证据不足的运行必须进入台账；
+  \item 事后市场状态标签不得作为预注册分组；
+  \item 参数敏感性输出保留全部登记邻域，不只保留最佳点；
+  \item 子样本覆盖或有效期不足时返回明确状态；
+  \item 不同持有期必须使用独立标签版本；
+  \item 相同输入、配置、代码和数据版本生成一致结果；
+  \item 进入第 8 章的因子版本必须生成明确冻结记录；
+  \item 本章代码不能访问多因子综合分、组合权重或正式回测结果。
+\end{enumerate}
+
+\begin{practicebox}
+\textbf{[正确实践]} 人工核对至少选择一个正常实验、一个参数尖峰、一个覆盖不足子样本、一个失败运行和一次测试访问。逐项核对实验编号、事前理由、版本、时间边界、允许扰动、完整邻域、状态、结果位置、测试/留出访问次数和最终决定，并确认旧记录未被覆盖。
+\end{practicebox}
+
+还应抽取一个扩展窗口和一个滚动窗口，手工核对其信号日集合；抽取一个替代持有期，确认使用独立标签版本；抽取一个市场状态记录，确认定义时间早于结果生成时间。
+
+\section{阶段决策与停止条件}
+
+本章允许五类阶段决定。它们都必须说明时间稳定性、参数稳定性、子样本稳定性、覆盖率、暴露、换手与成本敏感性、测试集查看次数、主要失败区域和最终冻结版本。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{稳健性阶段决策表}
+  \label{tab:ch07-stage-decisions}
+  \begin{tabularx}{\textwidth}{p{3.2cm} p{5.2cm} Y}
+    \toprule
+    决策 & 适用情形 & 后续动作 \\
+    \midrule
+    通过基本稳健性审查 & 主基线在预注册维度形成可解释区域，无重大时序或版本问题 & 冻结唯一版本并进入第 8 章 \\
+    带条件进入第 8 章 & 存在明确、事前可解释的适用边界，边界外结果完整披露 & 冻结版本与条件，不在组合阶段重新挑选 \\
+    返回数据或实现修复 & 点时、标签、版本、覆盖断点或代码错误污染证据 & 新建版本和实验链，旧结果保留为失败记录 \\
+    停止该因子 & 在可信数据与实现下，多项预注册检查持续不支持假设或交易压力不可接受 & 记录停止原因，不扩大参数搜索 \\
+    证据不足 & 样本、覆盖、历史版本或留出条件不足以支持决定 & 明确缺失证据，不把未知写成通过或失败 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+停止条件应在运行前登记，例如重大点时错误、关键区间覆盖不足、方向在多数预设分段不一致、结论只来自单点尖峰，或测试集已被反复用于调参。阈值需由真实项目确认，但停止规则不能在看到结果后放宽。
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：随机打乱时间序列；让标签跨分割边界泄漏；把验证、测试和留出混为一类；看过测试后继续调参；反复查看最终留出；遍历大量窗口寻找最大值；只展示最佳参数；把孤立尖峰称为稳健；用事后行情命名市场状态；忽略子样本覆盖损失；让不同持有期共用标签版本；删除失败实验；覆盖旧台账；以及根据第 8—10 章组合结果返回挑选本章版本。
+\end{warningbox}
+
+这些错误的共同点是让研究者的选择权没有进入报告。修复时必须恢复完整实验历史、重新标记已经被查看的数据职责，并在必要时承认已经没有真正未使用的留出集。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：版本化时间切分方案；扩展与滚动窗口配置；冻结主配置和预注册扰动清单；时间、行业、市值、流动性、股票池和事前市场状态检查；独立持有期标签版本；追加式实验台账；稳健性矩阵；测试与最终留出访问记录；自动测试和人工核对结果；阶段决策与适用边界；以及进入第 8 章的最终冻结因子版本。
+\end{outputbox}
+
+没有真实数据时，只提交结构模板、状态逻辑和匿名教学案例，不填写 IC、RankIC、收益、夏普或回撤。失败和证据不足同样是正式产出。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 训练、验证、测试和最终留出区间各自承担什么职责？
+  \item 为什么随机打乱会破坏时间序列样本外语义？
+  \item 扩展窗口与滚动窗口分别更适合观察什么问题？
+  \item 哪些变化属于预注册参数邻域，哪些应被视为新研究假设？
+  \item 为什么单点尖峰通常比合理平坦区域更值得警惕？
+  \item 事后市场状态为什么不能作为确认性稳健证据？
+  \item 不同持有期为什么必须使用独立标签版本？
+  \item 测试集被查看后再改参数，应如何重新定义其职责？
+  \item 失败运行和证据不足为什么必须进入实验台账？
+  \item 带条件进入第 8 章时，必须冻结哪些边界和版本？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 8 章《因子冗余与简单多因子合成》的衔接}
+
+本章结束时，每个候选因子只能携带一个明确冻结的公式、方向、预处理、股票池、标签和评价版本，以及已经披露的适用边界。第 8 章将判断不同因子是否提供增量信息，并使用透明方法形成简单综合信号；它不能重新打开本章参数搜索，也不能根据组合表现选择另一个历史版本。
+
+若本章决定为“返回数据或实现修复”，应先完成新版本的全链条检验；若为“停止”或“证据不足”，不得为了凑齐三因子案例而强行纳入。只有通过或带条件通过的冻结版本，才有资格进入冗余分析和多因子合成。
