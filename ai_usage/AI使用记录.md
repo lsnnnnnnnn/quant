@@ -237,3 +237,45 @@ AI 输出摘要：阶段 A 将全仓库自定义 TikZ/PGF 样式统一改为 `qu
 人工核验：尚未完成。
 
 修改原因：执行 P07 两阶段任务并保留本次完整 AI 使用留痕。
+
+---
+
+## P08-001
+
+记录编号：P08-001
+
+日期：2026-07-20
+
+任务名称：修复 tcolorbox 解析与剩余 LaTeX 阻塞
+
+原始任务位置：`ai_usage/raw_prompts.md` 中同编号记录。
+
+提问目的：修复语义框开头裸方括号文本被 `tcolorbox` 当作可选 key 解析的问题，确认既有 TikZ 与页眉修复已进入 `main`，并补全第 6 章 RankIC 公式遗漏的反斜杠。
+
+使用的模型或工具：Codex；本地文件读取与补丁编辑；`rg`、Python 只读静态检查、Git 状态与版本控制命令。当前环境未安装 `latexmk` 或 `xelatex`。
+
+读取的主要文件：`AGENTS.md`、`CODEX.md`、`main.tex`、`preamble.tex`、全仓库 `.tex` 文件及两份 AI 使用记录。
+
+修改文件：`chapters/ch03_universe_labels.tex`、`chapters/ch04_factor_construction.tex`、`chapters/ch05_preprocessing.tex`、`chapters/ch06_single_factor.tex`、`ai_usage/raw_prompts.md`、`ai_usage/AI使用记录.md`。
+
+AI 输出摘要：逐项确认并修复 19 处语义框开头裸标签，将其改为以 `\textbf{[标签]}` 起始；补全第 6 章 RankIC 公式中的 `\operatorname`；确认全仓库不存在裸 `step` TikZ 样式，`preamble.tex` 已使用 `headheight=22pt`。由于本机没有 TeX，使用语义框扫描、LaTeX 环境配对、标签/引用、章节载入、Beamer 禁用项和构建产物检查完成静态验收。
+
+使用方式：待人工审阅后决定采用方式；当前不标记为直接采用。
+
+人工核验方式：核对每一处 diff 只增加 `\textbf{}` 包裹或补全单个反斜杠；检查 tcolorbox 定义、TikZ 键、页眉高度、章节 `\include`、环境配对和引用关系。
+
+发现的问题：第 3—6 章共有 19 个语义框在环境开始后的首个非空内容使用裸方括号标签；第 6 章 RankIC 第一项缺少 `\operatorname` 的反斜杠。本地缺少 TeX 工具链，无法验证 PDF 页数和 Overleaf 实际日志。
+
+人工修改及理由：只对已确认的裸标签添加 `\textbf{}`，保留文字、公式、标签、交叉引用和章节结构；RankIC 仅补全遗漏反斜杠，不改变数学含义。
+
+尚待人工核验事项：在 Overleaf 使用 XeLaTeX 完整编译至少两轮，确认 PDF 章节、版面和最终页数。
+
+尚待 Overleaf 编译检查事项：不再出现 `/tcb/通用原则`、`/tcb/教学简化`、`/tcb/需实际确认`、`/tikz/step`、页眉高度警告、Emergency stop 或 Fatal error，并检查第二至第六章和后续占位章节均被载入。
+
+已知限制：本记录只证明本地静态检查通过，不声称 XeLaTeX 编译或 PDF 视觉检查已经完成。
+
+责任声明：最终编译结果、排版质量和研究内容仍由提交人负责人工核验。
+
+人工核验：尚未完成。
+
+修改原因：修复 Overleaf 报告的 tcolorbox 解析错误及剩余 LaTeX 阻塞，并保留本次 AI 使用留痕。
