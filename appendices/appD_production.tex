@@ -1,5 +1,167 @@
 \chapter{生产化概览}
+\label{app:production}
 
-\section*{待编写}
+\section*{如何使用本附录}
 
-% TODO: 后续里程碑补充生产化概览。
+本附录只帮助新人识别研究版本进入持续运行前还缺少哪些治理与工程环节。本附录不是生产系统设计文档，不提供内部系统名称、审批流程、告警阈值或实盘操作方案；所有具体实现均为\textbf{[需实际确认]}，也不属于主体课程结业要求。
+
+\section{为什么研究通过不等于可以上线}
+
+第 \cref{ch:backtest} 的研究通过只能说明：在冻结数据、代码、配置和回测假设下，证据链达到事前标准。持续运行还会面对数据延迟、字段变更、任务失败、版本错配、执行差异、权限和异常处置等问题。一次可复现回测不能证明这些运行条件已经具备。
+
+生产准备的核心不是再优化历史结果，而是确保同一输入能稳定生成同一信号，异常能够被发现、隔离和解释，变更能够审计，必要时能够回到已知安全状态。\cref{fig:appD-production-flow} 仅展示概念顺序。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=5mm and 6mm,
+    every node/.style={font=\footnotesize, align=center},
+    quantProductionStep/.style={quantBlueCard, text width=3.4cm, minimum height=1.05cm},
+    quantProductionReview/.style={quantCard, text width=3.4cm, minimum height=1.05cm},
+    quantProductionRun/.style={quantGreenCard, text width=3.4cm, minimum height=1.05cm},
+    quantProductionExit/.style={quantOrangeCard, text width=3.4cm, minimum height=1.05cm}
+  ]
+    \node[quantProductionStep] (freeze) {研究版本冻结};
+    \node[quantProductionReview, right=of freeze] (review) {独立复核};
+    \node[quantProductionReview, right=of review] (register) {数据与代码制品登记};
+    \node[quantProductionRun, below=of register] (shadow) {影子运行};
+    \node[quantProductionRun, left=of shadow] (approval) {上线审批};
+    \node[quantProductionRun, left=of approval] (monitor) {生产监控};
+    \node[quantProductionExit, below=of monitor] (exit) {回滚或退役};
+    \draw[quantArrow] (freeze) -- (review);
+    \draw[quantArrow] (review) -- (register);
+    \draw[quantArrow] (register) -- (shadow);
+    \draw[quantArrow] (shadow) -- (approval);
+    \draw[quantArrow] (approval) -- (monitor);
+    \draw[quantArrow] (monitor) -- (exit);
+  \end{tikzpicture}
+  \caption{从研究冻结到监控、回滚或退役的概念流程。实际审批、权限、持续时间和触发条件均需确认。}
+  \label{fig:appD-production-flow}
+\end{figure}
+
+\section{研究环境与生产环境的一致性}
+
+一致性检查的对象是语义和结果，不是要求研究与生产使用完全相同的技术栈。两边可以采用不同存储或任务编排，只要字段、时点、日历、版本、公式、精度和失败状态能够一一对应，并能解释任何差异。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{研究与生产一致性检查}
+  \label{tab:appD-consistency}
+  \begin{tabularx}{\textwidth}{p{3.0cm} p{4.4cm} p{4.4cm} Y}
+    \toprule
+    检查对象 & 研究侧证据 & 持续运行侧证据 & 结论字段 \\
+    \midrule
+    数据与时间 & 字段审计、信号截止、数据版本 & 实际到达时间、快照、延迟和缺失状态 & \texttt{ACTUAL\_CONFIRM} \\
+    股票池与主键 & 历史成分、稳定证券标识、原因码 & 当日成分、主键映射和生效区间 & \texttt{ACTUAL\_CONFIRM} \\
+    因子与预处理 & 公式、方向、参数与降级状态 & 同版本计算、数值容差和异常状态 & \texttt{ACTUAL\_CONFIRM} \\
+    综合分与组合 & 因子集合、约束、现金和降级轨迹 & 同一输入下的目标权重与差异明细 & \texttt{ACTUAL\_CONFIRM} \\
+    订单与执行接口 & 研究订单、成交代理和原因码 & 实际接口字段、状态映射和回执 & \texttt{ACTUAL\_CONFIRM} \\
+    依赖与运行环境 & 代码提交、配置、依赖清单 & 发布制品、运行身份和任务日志 & \texttt{ACTUAL\_CONFIRM} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+差异不能只汇总为“相同/不同”。至少应按证券、日期、字段和版本保存差异值、原因、责任状态和处置结果；否则影子运行无法证明问题已经关闭。
+
+\section{数据快照和数据血缘}
+
+生产输入应能回答：使用了哪个原始快照、何时到达、经过哪些转换、产生了哪个信号、又被哪个目标组合和订单引用。血缘链至少连接数据版本、交易日历、股票池、因子、预处理、综合分、组合和执行版本。
+
+快照应保持不可变或具有等价的可重建能力。若上游修订数据，应生成新快照并记录影响范围，不能无痕覆盖已经支持过历史信号的输入。数据保留期限、权限、修订策略和异常回补方式均需实际确认。
+
+\section{配置、代码与模型制品版本}
+
+持续运行需要把研究中的代码提交、配置文件、依赖环境、因子集合和组合规则登记为一组发布制品。任何实质变化都应产生新版本，并说明变更原因、复核证据、兼容性和回退目标。
+
+“模型制品”在本项目中是广义概念，可以只是冻结因子公式、配置、schema 和代码包，不暗示使用复杂机器学习模型。不得只保留一个可变的“最新版本”，也不得让运行时从未审查位置读取参数。
+
+\section{定时任务与依赖检查}
+
+定时任务必须在读取数据、计算信号和发布结果前核对交易日历、上游完成状态、数据时效、版本一致性、主键唯一性、资源状态和输出幂等性。任一关键依赖未知时，应产生明确失败或暂停状态，而不是沿用旧数据却继续标记“成功”。
+
+任务开始时间、重试次数、超时、依赖图、补跑边界和人工干预权限均属于机构实现。这里只要求每次运行拥有唯一身份，状态从触发到结束可追溯，重复运行不会无说明覆盖旧结果。
+
+\section{影子运行}
+
+影子运行（shadow run）是在不触发真实交易的条件下，用拟上线的数据、日历、代码、配置和任务环境持续生成信号、目标组合与模拟执行结果。它重点发现研究—生产差异和运行稳定性问题，不用于继续调优历史参数。
+
+影子期应按实际日程比较输入覆盖、因子值、目标权重、失败状态、耗时和版本。持续时长、允许差异、是否需要并行旧版本以及退出标准均需实际确认；本讲义不提供统一门槛。
+
+\section{上线前验收}
+
+上线前验收至少应确认：研究结论与限制已签署；数据和代码制品可重建；影子差异已解释；监控和告警能够触发；回滚目标可用；权限、联系人和变更记录完整。验收不能以单次任务成功或历史净收益为唯一依据。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 实际审批角色、材料清单、影子期长度、容差、权限、发布窗口和是否允许带条件上线，均由机构治理与技术环境决定。本附录不虚构任何现有流程。
+\end{confirmbox}
+
+\section{日常监控与异常告警}
+
+监控应沿证据链分层，使异常能够定位到数据、信号、组合、交易、风险或任务，而不是等到净值变化后再猜原因。\cref{tab:appD-monitoring} 只列分类和可观察对象，不提供告警阈值。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{监控指标分类}
+  \label{tab:appD-monitoring}
+  \begin{tabularx}{\textwidth}{p{3.0cm} p{5.6cm} p{4.0cm} Y}
+    \toprule
+    类别 & 可监控对象 & 最小切分 & 阈值/处置 \\
+    \midrule
+    数据更新和覆盖 & 到达时间、缺失、重复、修订、成分和字段分布 & 日期、来源、字段、证券 & 需实际确认 \\
+    因子分布 & 有效覆盖、均值、离散度、极端值、退化状态与版本差异 & 因子、日期、行业、市值层 & 需实际确认 \\
+    行业和市值暴露 & 因子、综合分、目标与实际持仓的暴露 & 日期、行业、规模层 & 需实际确认 \\
+    目标与实际偏差 & 证券权重、现金、原因码和偏差持续时间 & 调仓日、证券、原因 & 需实际确认 \\
+    换手和成本 & 目标、订单、成交换手及各成本项 & 日期、买卖侧、流动性层 & 需实际确认 \\
+    未成交率 & 完全、部分、未成交和未知状态 & 日期、方向、原因、证券 & 需实际确认 \\
+    组合风险 & 集中度、行业偏离、流动性、波动和回撤状态 & 日期、组合、暴露维度 & 需实际确认 \\
+    代码和任务状态 & 依赖、耗时、失败、重试、版本和输出完整性 & 任务、运行身份、环境 & 需实际确认 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+告警必须关联责任状态、确认时间、影响范围和后续动作。具体告警等级、阈值和时限均不能从本讲义推断。
+
+\section{回滚和应急处理}
+
+回滚意味着把数据、代码、配置和运行入口恢复到一组已登记且可验证的组合，而不是只把某个参数改回旧值。触发前应冻结当前异常证据，避免修复过程覆盖原始日志。
+
+应急处置的可能状态包括继续观察、暂停新信号、阻止发布、回滚、修复后补跑或退役；哪一种可用取决于机构权限和交易环境。对无法卖出的实际持仓，系统层“停止任务”也不能让证券从账本中消失。
+
+\section{因子衰减、暂停和退役}
+
+因子表现变化可能来自数据故障、实现漂移、暴露变化、交易成本、市场状态或原机制衰减。复评应先区分这些来源，再依据事前规则决定继续、带条件继续、降权、暂停、返工或退役，不能因短期盈亏情绪化调整。
+
+暂停和退役也需要版本与证据：记录决定时间、适用组合、未完成订单、实际持仓处置边界、替代方案和恢复条件。具体复评周期、阈值和授权人均需实际确认。
+
+\section{角色与职责}
+
+\cref{tab:appD-roles} 使用通用职能名称描述职责分离，不代表仓库对应任何真实组织。一个人可以在小团队承担多个职能，但研究提出、独立复核、数据责任、运行责任和最终授权是否需要分离，必须由实际治理确认。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{角色与职责矩阵（概念模板）}
+  \label{tab:appD-roles}
+  \begin{tabularx}{\textwidth}{p{3.2cm} p{5.4cm} p{4.5cm} Y}
+    \toprule
+    通用职能 & 主要职责 & 最小留痕 & 实际映射 \\
+    \midrule
+    研究负责人 & 假设、口径、配置、证据解释和限制 & 研究任务、版本、结论与变更理由 & 需实际确认 \\
+    独立复核职能 & 核对数据、代码、时序、统计、账本与选择性汇报 & 问题清单、复核状态与异议 & 需实际确认 \\
+    数据责任职能 & 字段语义、快照、血缘、修订和数据质量 & 数据字典、版本、到达与异常记录 & 需实际确认 \\
+    运行责任职能 & 发布制品、任务依赖、监控、日志和回滚执行 & 运行身份、状态、告警与处置 & 需实际确认 \\
+    风险/授权职能 & 评价适用边界、风险接受和是否允许发布 & 决定、条件、责任与有效期 & 需实际确认 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{本课程与生产化的边界}
+
+主体十章的结业目标止于可复现的含成本研究回测及其解释。本附录中的制品登记、影子运行、审批、监控、回滚和退役只建立概念认识，不要求新人建设真实生产平台、OMS/EMS、实时监控或机构治理系统。
+
+因此，完成课程不等于策略可上线；研究结论也不构成上线建议。若项目继续进入生产化，应另行编写实际数据、系统、权限、审批、监控和应急设计文档，并由相应责任人核验。
