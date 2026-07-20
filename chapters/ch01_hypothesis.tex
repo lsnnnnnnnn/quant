@@ -1,5 +1,420 @@
 \chapter{研究问题与可证伪假设}
+\label{ch:hypothesis}
 
-\section*{待编写}
+\section{本章导读}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+量化研究的起点不是因子公式，也不是一条回测曲线，而是一个允许失败的研究问题。新人常从“价格趋势可能延续”或“盈利能力较高的公司可能更受市场认可”出发；这些说法提供了直觉，却没有说明用什么历史信息、在什么股票池、预测哪个未来区间，也没有规定什么证据会让研究者放弃原想法。若这些边界在看到结果以后才补写，研究就很容易退化为寻找漂亮曲线。
+
+本章把模糊想法逐步转换为可登记、可复现、可支持、可否定或可判定为证据不足的任务。贯穿案例仍是“宽基股票池三因子周频约束多头策略”：候选因子为中期动量、账面市值比价值和 ROE 类质量，最终可能形成不加杠杆、不做空的约束型多头组合，但本章不计算因子表现，也不预设任何因子有效。
+
+\begin{principlebox}
+\textbf{[通用原则]} 一个合格假设必须允许不利结论。正收益不是课程验收条件；发现时间边界错误、证据不足或假设不受支持，同样是有价值且必须保留的研究产出。
+\end{principlebox}
+
+\section{学习目标}
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 区分投资直觉、经济机制、可计算代理与统计假设；
+  \item 写清预测对象、方向、股票池、信号时点、持有期和评价口径；
+  \item 写出原假设、备择假设以及能够否定想法的证据；
+  \item 区分主分析、预注册敏感性分析与探索性分析；
+  \item 在实验前冻结主参数、停止条件与版本身份；
+  \item 为三个教学因子建立研究假设卡；
+  \item 接受支持、带条件支持、不支持和证据不足都是合法结论；
+  \item 使用研究编号与实验编号保留完整审计链。
+\end{enumerate}
+
+\section{量化研究不是寻找漂亮曲线}
+
+研究者可以轻易改变回看窗口、财务滞后、股票池、持有期或样本起点。若每次变化后都查看结果，再只保留最有利版本，那么最后一条曲线同时包含了投资想法和研究者的选择，无法再被当作独立证据。更危险的是，结果往往会反向改写故事：先找到相关性，再补写一个似乎合理的机制。
+
+正确目标是建立一条可核对的证据链：先说明为什么可能存在预测关系，再冻结代理、时间边界与评价规则，最后让数据决定结论。经济逻辑不是因子已经有效的证明；统计结果也不能创造原本不存在的经济逻辑。
+
+\begin{warningbox}
+先批量试参数、只展示最佳结果，再补写研究动机，会隐藏研究自由度并夸大证据。即使代码和每一次计算都正确，选择过程仍会损害结论的可信度。
+\end{warningbox}
+
+\section{从投资想法到证据链}
+
+\cref{fig:ch01-research-chain} 给出全书的研究地图。每一步只承担一种职责：经济机制解释“为什么可能成立”，点时数据回答“当时能否知道”，单因子与稳健性证据回答“是否值得保留”，组合和回测才回答“能否转化为约束下的实际持仓与含成本结果”。后一步不能回头改写前一步的冻结定义。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=6mm and 7mm,
+    every node/.style={font=\footnotesize, align=center},
+    quantHypothesisFlow/.style={quantCard, text width=3.2cm, minimum height=0.95cm},
+    quantHypothesisGate/.style={quantBlueCard, text width=3.2cm, minimum height=0.95cm},
+    quantHypothesisOutput/.style={quantGreenCard, text width=3.2cm, minimum height=0.95cm}
+  ]
+    \node[quantHypothesisFlow] (intuition) {投资直觉};
+    \node[quantHypothesisFlow, right=of intuition] (mechanism) {经济机制};
+    \node[quantHypothesisFlow, right=of mechanism] (proxy) {可计算代理};
+    \node[quantHypothesisGate, below=of proxy] (pit) {点时数据};
+    \node[quantHypothesisGate, left=of pit] (single) {单因子证据};
+    \node[quantHypothesisGate, left=of single] (robust) {稳健性};
+    \node[quantHypothesisOutput, below=of robust] (multi) {多因子};
+    \node[quantHypothesisOutput, right=of multi] (portfolio) {约束组合};
+    \node[quantHypothesisOutput, right=of portfolio] (backtest) {含成本回测};
+    \draw[quantArrow] (intuition) -- (mechanism);
+    \draw[quantArrow] (mechanism) -- (proxy);
+    \draw[quantArrow] (proxy) -- (pit);
+    \draw[quantArrow] (pit) -- (single);
+    \draw[quantArrow] (single) -- (robust);
+    \draw[quantArrow] (robust) -- (multi);
+    \draw[quantArrow] (multi) -- (portfolio);
+    \draw[quantArrow] (portfolio) -- (backtest);
+  \end{tikzpicture}
+  \caption{从投资直觉到含成本回测的全文研究流程。箭头表示证据与版本的前向依赖，不表示任何教学因子已经通过。}
+  \label{fig:ch01-research-chain}
+\end{figure}
+
+其中，可计算代理必须连接到明确的预测标签；检验设计至少覆盖有效覆盖率、RankIC 方向、分组单调性、非目标暴露、换手、成本与稳健性。只有完成这些检查后，候选才可能进入第 \cref{ch:factor-combination,ch:portfolio,ch:backtest} 的多因子、组合和回测阶段。
+
+\section{明确研究任务}
+
+投资想法、研究假设、因子公式和交易规则容易被混用，但它们回答的问题不同。\cref{tab:ch01-object-differences} 是第一次登记时的最小辨别表。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{投资想法、研究假设、因子公式与交易规则的区别}
+  \label{tab:ch01-object-differences}
+  \begin{tabularx}{\textwidth}{p{2.4cm} p{4.2cm} Y Y}
+    \toprule
+    对象 & 回答的问题 & 合格示例的结构 & 不能替代 \\
+    \midrule
+    投资想法 & 哪种现象值得研究 & “价格趋势可能延续” & 机制、数据边界和检验 \\
+    研究假设 & 在什么冻结条件下，什么证据支持或反对预测关系 & 股票池、时点、标签、方向、证据维度和停止条件 & 已实现公式或交易结论 \\
+    因子公式 & 如何把历史可得信息转为逐证券数值 & 输入字段、窗口、缺失、方向和版本 & 假设成立或可交易性 \\
+    交易规则 & 如何把冻结信号转为订单与持仓 & 选股、权重、约束、成交和成本规则 & 因子预测力与稳健性 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+研究问题可以写成一句完整问句：“在冻结的历史宽基股票池与周度标签下，某一候选代理是否提供方向一致、可解释、具有增量且具备基本可交易性的横截面预测信息？”其中“某一候选代理”必须替换为版本化定义；“冻结”表示不能看完结果后无痕改动。
+
+\section{预测对象与未来收益标签}
+
+预测对象不是模糊的“未来表现”，而是信号时点之后、由两个可配置成交代理时点界定的横截面未来收益。设证券 \(i\) 在信号日 \(t\) 的因子值为 \(x_{i,t}\)，下一次和再下一次假设成交价格分别为 \(P^{\mathrm{exec}}_{i,t+1}\) 与 \(P^{\mathrm{exec}}_{i,t+1+H}\)，教学标签写为
+
+\begin{equation}
+  y_{i,t}^{(H)}
+  = \frac{P^{\mathrm{exec}}_{i,t+1+H}}
+           {P^{\mathrm{exec}}_{i,t+1}} - 1.
+  \label{eq:ch01-forward-label}
+\end{equation}
+
+公式只规定时间方向，不替真实项目决定开盘价、收盘价、均价、复权和不可成交处理。第 \cref{ch:universe-labels} 将正式定义标签起止与失败状态；本章只冻结“信号截止严格早于标签起点”，并禁止用标签期信息选择因子或样本。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 成交价格代理、持有期交易日计数、复权与公司行动、缺失成交、停牌和价格限制的处理，均依赖真实数据与研究制度。它们必须先登记，再由后续章节实现。
+\end{confirmbox}
+
+\section{股票池、信号时点与持有期}
+
+贯穿案例使用有历史成分记录、可通过配置替换的宽基股票池。每周最后一个交易日收盘后冻结信号，下一交易日按配置代理模拟成交，持有至下一次调仓对应的成交时点。信号日股票池只能由当时及以前的信息确定；下一交易日出现的停牌或价格限制属于成交事件，不能回头删除信号日证券。
+
+股票池、信号频率、调仓频率和持有期共同决定“比较谁、在何时预测、预测多远”。第 \cref{ch:data-timing} 处理数据可得性，第 \cref{ch:universe-labels} 处理历史成分、可交易边界和标签；本章登记这些接口，不提前重复实现。
+
+\section{经济机制与可计算代理}
+
+一条研究链至少包含四个相互独立的陈述：投资直觉提出可能现象；经济机制说明为何历史信息可能缓慢进入价格；可计算代理把机制映射为当时可得的数值；统计假设规定在冻结评价下什么证据支持或反对预测关系。
+
+例如，“趋势可能延续”是直觉；信息扩散缓慢、投资者反应不足或机构交易延续是候选机制；跳过近期区间的中期历史收益是代理。机制可能不完整，代理也可能带有波动或流动性暴露。因此研究者必须同时记录代理为何与机制相关，以及它还可能测量了什么。第 \cref{ch:factor-construction,ch:preprocessing} 分别核对公式实现和基础暴露控制。
+
+\begin{teachingbox}
+\textbf{[教学简化]} 机制的作用是形成可检查预测并解释失败路径，不是要求新人证明唯一因果关系。一个逻辑合理但数据不支持的假设应如实停止；一个数据相关但缺乏可解释机制的发现只能进入新一轮探索。
+\end{teachingbox}
+
+\section{原假设、备择假设与可证伪性}
+
+在因子方向统一为“数值越高，预期未来相对收益越高”后，一般形式可以写为 \cref{tab:ch01-hypotheses}。它们针对一组预注册证据，而不是单个平均指标。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{原假设、备择假设与所需证据}
+  \label{tab:ch01-hypotheses}
+  \begin{tabularx}{\textwidth}{p{1.5cm} p{7.1cm} Y}
+    \toprule
+    假设 & 一般表述 & 评价纪律 \\
+    \midrule
+    \(H_0\) & 在冻结股票池、标签和评价口径下，因子不提供稳定、具有增量且具备基本可交易性的横截面预测信息。 & 允许由无效、方向不稳、非目标暴露、换手成本压力或缺乏增量等多种证据支持。 \\
+    \(H_1\) & 在相同冻结条件下，因子在预注册证据维度中提供方向一致、可解释并具有基本可交易性的横截面预测信息。 & 需要覆盖率、方向、单调性、暴露、换手、成本、稳健性与增量证据共同支撑。 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+“平均 IC 大于零”不能单独定义 \(H_1\)：平均值可能被少数时期驱动，也未说明覆盖、分组结构、风险暴露和交易压力。未拒绝 \(H_0\) 不等于证明因子永远无效；证据不足也不等于通过或失败。具体统计阈值、最小有效期数与业务闸门均须在真实项目中事前确认，本讲义不虚构统一标准。
+
+\section{主分析、敏感性分析与探索性分析}
+
+三类分析的区别不在于代码函数，而在于何时定义、承担何种结论。预注册敏感性只检查少量合理邻域；看到结果后产生的新设定属于探索性分析，必须进入新版本。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \setlength{\tabcolsep}{3pt}
+  \caption{主分析、预注册敏感性分析与探索性分析}
+  \label{tab:ch01-analysis-types}
+  \begin{tabularx}{\textwidth}{p{2.0cm} p{2.1cm} p{2.5cm} p{2.5cm} p{1.6cm} Y}
+    \toprule
+    类型 & 定义时间 & 参数范围 & 能否影响本轮主结论 & 是否新版本 & 报告方式 \\
+    \midrule
+    主分析 & 查看本轮结果前 & 唯一冻结基线 & 是，承担主要结论 & 初始冻结版本 & 完整报告全部证据维度 \\
+    预注册敏感性 & 查看本轮结果前 & 少量、有经济或实现理由的邻近设定 & 只能评价依赖性与适用边界，不能替换主分析选赢家 & 每个候选独立配置身份 & 与主分析并列报告，包括失败 \\
+    探索性分析 & 查看结果后产生 & 新代理、新窗口或新分组 & 否，只能生成下一轮假设 & 必须新建研究或实验版本 & 标记探索性，保留产生背景 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{参数预注册与研究自由度}
+
+预注册是在计算结果前记录主窗口、替代窗口、数据滞后、标签、预处理、评价指标、样本切分和停止条件。它不要求研究者预知所有问题，而是让后来者看见哪些选择是事前决定，哪些是看到结果后的调整。
+
+研究自由度包括公式、窗口、缺失处理、异常值处理、行业控制、股票池、标签、样本起止和汇报指标。候选越多，偶然出现有利结果的机会越大。主配置应保持唯一；敏感性集合应小且有理由；超出集合的新想法要创建新版本，不得覆盖旧记录。第 \cref{ch:robustness} 将进一步管理时间切分、参数邻域和测试集访问。
+
+\section{支持、否定、返工和证据不足}
+
+证据结论与工作流状态应分开表达。证据可以“支持”“带条件支持”“不支持”或“证据不足”；工作流则可以继续、带条件继续、返回实现或数据修复、停止或保留证据不足。返工只适用于数据或实现错误，不用于挽救可信但不利的结果。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=6mm and 10mm,
+    every node/.style={font=\footnotesize, align=center},
+    quantHypothesisDecision/.style={diamond, aspect=2.0, draw=SoftBlue, fill=BlockBlue, inner sep=1.2pt, text width=2.9cm},
+    quantHypothesisContinue/.style={quantGreenCard, text width=3.0cm},
+    quantHypothesisRepair/.style={quantOrangeCard, text width=3.0cm},
+    quantHypothesisInsufficient/.style={quantCard, text width=3.0cm}
+  ]
+    \node[quantHypothesisDecision] (valid) {数据与实现可信？};
+    \node[quantHypothesisRepair, left=of valid] (repair) {返回实现或数据修复\\新版本保留旧记录};
+    \node[quantHypothesisDecision, below=of valid] (enough) {证据足以评价？};
+    \node[quantHypothesisInsufficient, left=of enough] (insufficient) {证据不足\\不通过也不失败};
+    \node[quantHypothesisDecision, below=of enough] (support) {预注册证据支持？};
+    \node[quantHypothesisContinue, left=of support] (continue) {继续或带条件继续\\冻结边界};
+    \node[quantHypothesisRepair, right=of support] (stop) {停止\\如实保留不支持};
+    \draw[quantArrow] (valid) -- node[above] {否} (repair);
+    \draw[quantArrow] (valid) -- node[right] {是} (enough);
+    \draw[quantArrow] (enough) -- node[above] {否} (insufficient);
+    \draw[quantArrow] (enough) -- node[right] {是} (support);
+    \draw[quantArrow] (support) -- node[above] {是} (continue);
+    \draw[quantArrow] (support) -- node[above] {否} (stop);
+  \end{tikzpicture}
+  \caption{支持、返工、停止与证据不足的阶段决策。返工要求存在可定位的数据或实现问题。}
+  \label{fig:ch01-decision-flow}
+\end{figure}
+
+\section{停止条件}
+
+停止条件在实验前登记，但不填写未经确认的数值阈值。\cref{tab:ch01-stop-conditions} 给出本案例的原则级清单。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{停止条件与阶段状态}
+  \label{tab:ch01-stop-conditions}
+  \begin{tabularx}{\textwidth}{p{5.5cm} p{3.0cm} Y}
+    \toprule
+    观察状态 & 阶段状态 & 解释 \\
+    \midrule
+    重大前视偏差；历史成分或关键数据版本无法恢复 & 返回修复；无法恢复时停止 & 证据链失去时间或版本基础 \\
+    覆盖率不足以支持评价 & 证据不足 & 不得缩小分母制造“通过” \\
+    关键参数只有孤立尖峰 & 停止或带条件继续 & 不把尖峰替换为主基线 \\
+    方向在多数预注册分段不一致 & 停止或证据不足 & 区分稳定反证与样本不足 \\
+    结果主要由无法解释的非目标暴露驱动 & 返回机制审查或停止 & 不能把未解释暴露当作原机制证据 \\
+    换手或成本压力与研究目标明显冲突 & 停止或带条件继续 & 适用边界必须冻结并披露 \\
+    测试集或最终留出集被反复用于调参 & 停止本轮确认性结论 & 新想法只能进入下一研究版本 \\
+    因子缺乏增量信息 & 停止其进入正式组合 & 不因单因子表面相关而保留 \\
+    数据和实现可信，但证据持续不支持假设 & 停止 & 不以返工名义继续搜索正结果 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+具体项目可以把“继续、带条件继续、返回实现或数据修复、停止、证据不足”写成枚举字段。阈值需实际确认，但状态语义不能随结果改变。
+
+\section{中期动量假设卡}
+
+\begin{casebox}[title={中期动量假设卡}]
+\textbf{因子名称与研究问题：}中期动量；历史中期相对强势是否预测下一周度持有期的相对收益。\textbf{候选机制：}信息扩散缓慢、反应不足或机构交易延续。\textbf{可计算代理与方向：}使用点时价格构造的中期累计收益，统一为数值越高、预期相对收益越高。
+
+\textbf{数据与历史可得时间：}当时可得的交易日、价格、复权或公司行动信息、历史股票池；每个信号日只用截止时点以前记录。\textbf{主窗口：}约 12 个月历史并跳过最近约 1 个月，仅为教学基线，不是行业唯一标准或回测优选结果。\textbf{标签：}下一次调仓成交代理时点之间的未来相对收益。
+
+\textbf{主要检验：}覆盖率、RankIC 方向、分组单调性、暴露、换手、成本与稳健性。\textbf{预注册敏感性：}少量邻近回看、跳过与最小历史观测设定。\textbf{可能暴露与交易风险：}高波动、流动性、规模、拥挤和较高换手。
+
+\textbf{支持：}预注册证据方向一致、可解释且具备基本可交易性；\textbf{否定：}可信数据下方向持续不一致、主要由非目标暴露驱动或交易压力冲突；\textbf{证据不足：}历史或覆盖不足；\textbf{停止：}前视、复权错误无法修复、孤立窗口尖峰或反复窗口搜索。\textbf{主要失效机制：}市场快速反转、拥挤解除、流动性冲击，以及价格或复权处理错误。
+\end{casebox}
+
+\section{账面市值比价值假设卡}
+
+\begin{casebox}[title={账面市值比价值假设卡}]
+\textbf{因子名称与研究问题：}账面市值比价值；在点时财务信息下，相对较高的账面市值比是否预测下一周度持有期的相对收益。\textbf{候选机制：}市场对暂时不受欢迎或定价偏低公司的风险与现金流预期反应不充分。\textbf{可计算代理与方向：}可得权益除以同一口径市值，统一为数值越高、预期相对收益越高。
+
+\textbf{数据与历史可得时间：}权益报告期、公告/可得时间、修订版本和信号日市值；财务数据只能在公告或保守可得时点后使用。\textbf{主口径：}权益定义、市值时点与单位需实际确认；负权益不得无说明纳入。\textbf{标签：}与统一研究任务相同。
+
+\textbf{主要检验：}覆盖、方向、单调性、行业和市值暴露、换手、成本、稳健性与增量。\textbf{预注册敏感性：}少量保守财务滞后、市值口径或预先定义的变换。\textbf{可能暴露与交易风险：}行业资产结构、市值、流动性及困境公司暴露。
+
+\textbf{支持：}点时口径稳定且多维证据一致；\textbf{否定：}可信数据下证据持续不支持或完全由非目标暴露解释；\textbf{证据不足：}公告历史、修订版本或覆盖不足；\textbf{停止：}历史可得时间无法恢复、负权益/单位错误或无界口径搜索。\textbf{主要失效机制：}价值陷阱、行业不可比、会计质量问题和估值持续重定价。
+\end{casebox}
+
+\section{ROE 类质量假设卡}
+
+\begin{casebox}[title={ROE 类质量假设卡}]
+\textbf{因子名称与研究问题：}ROE 类质量；点时可得的持续盈利能力是否预测下一周度持有期的相对收益。\textbf{候选机制：}盈利效率可能反映经营质量、资本配置或竞争优势，但市场未必即时完全定价。\textbf{可计算代理与方向：}所有组成项均点时可得的 TTM 利润与可比权益口径之比，数值越高、预期相对收益越高。
+
+\textbf{数据与历史可得时间：}每个 TTM 组成项的报告期、公告/可得时间、修订版本和权益分母；不得用未来年度报告补齐历史指标。\textbf{主口径：}利润语义、平均或期末权益、小分母、负权益和一次性利润处理需实际确认。\textbf{标签：}与统一研究任务相同。
+
+\textbf{主要检验：}覆盖、方向、单调性、行业、规模与杠杆暴露、换手、成本、稳健性和增量。\textbf{预注册敏感性：}少量 TTM 构造、可比权益与小分母规则。\textbf{可能暴露与交易风险：}行业不可比、杠杆抬高 ROE、低覆盖和高估值拥挤。
+
+\textbf{支持：}点时组成完整且预注册证据一致；\textbf{否定：}证据持续不支持、质量已被估值充分反映或结果主要来自杠杆；\textbf{证据不足：}TTM 链或可比权益历史不足；\textbf{停止：}未来报告补齐、一次性利润污染无法识别或分母规则失控。\textbf{主要失效机制：}盈利均值回归、会计噪声、行业结构差异、杠杆和高质量已充分定价。
+\end{casebox}
+
+\section{统一研究任务说明}
+
+三张因子卡必须挂在同一研究任务下，避免各自更换股票池、标签或判断规则。\cref{tab:ch01-research-task} 冻结贯穿案例的最小字段；“需实际确认”不是空白许可，而是待确认项的显式状态。
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}p{2.55cm}p{4.95cm}p{2.55cm}p{4.95cm}@{}}
+\caption{统一研究任务冻结字段}\label{tab:ch01-research-task}\\
+\toprule
+字段 & 冻结教学设定 & 字段 & 冻结教学设定 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 冻结教学设定 & 字段 & 冻结教学设定 \\
+\midrule
+\endhead
+\texttt{research\_id} & 唯一研究编号，不复用 & \texttt{research\_question} & 三个候选代理是否提供可解释、增量且基本可交易的横截面信息 \\
+\texttt{market} & A 股普通股票日频横截面研究 & \texttt{universe\_definition} & 有历史成分记录的可替换宽基股票池；具体指数需实际确认 \\
+\texttt{signal\_frequency} & 周频 & \texttt{rebalance\_frequency} & 周频 \\
+\texttt{signal\_cutoff} & 每周最后一个交易日收盘后 & \texttt{execution\_timing} & 下一交易日；价格代理需实际确认 \\
+\texttt{holding\_period} & 至下一调仓成交代理时点 & \texttt{label\_definition} & 两个成交代理时点之间未来收益；细节需实际确认 \\
+\texttt{candidate\_factors} & 中期动量、账面市值比、ROE 类质量 & \texttt{main\_preprocessing} & 有效筛选、逐日 MAD、固定方向与逐日标准化；参数见第 \cref{ch:preprocessing} \\
+\texttt{main\_evaluation\_metrics} & 覆盖、RankIC、单调性、暴露、换手、成本、稳健性与增量 & \texttt{robustness\_plan} & 时间顺序切分与少量预注册邻域；边界需实际确认 \\
+\texttt{portfolio\_form} & 不加杠杆、不做空的约束型多头组合 & \texttt{cost\_scope} & 显性费用、滑点、冲击与不可成交；口径需实际确认 \\
+\texttt{primary\_decision\_rule} & 多维预注册证据闸门，不以单一平均值决定 & \texttt{stop\_conditions} & \cref{tab:ch01-stop-conditions} 的原则清单与实际确认阈值 \\
+\texttt{data\_requirements} & PIT 价格、财务公告与修订、历史成分、交易状态和公司行动 & \texttt{known\_limitations} & 数据版本、成交代理、费用、阈值和机构口径需实际确认 \\
+\texttt{owner} & 研究与复核责任人需实际确认 & \texttt{version} & 冻结配置版本，任何实质变更递增 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{实验登记和版本冻结}
+
+\texttt{research\_id} 标识一项问题，\texttt{experiment\_id} 标识该问题下的一次具体运行。旧实验采用追加式记录；修复或改配置必须生成新编号，不得覆盖不利结果。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{最小实验登记模板}
+  \label{tab:ch01-experiment-registry}
+  \begin{tabularx}{\textwidth}{p{3.0cm} Y p{3.0cm} Y}
+    \toprule
+    字段 & 记录内容 & 字段 & 记录内容 \\
+    \midrule
+    \texttt{experiment\_id} & 唯一运行编号 & \texttt{research\_id} & 所属研究任务 \\
+    \texttt{hypothesis\_version} & 假设卡版本 & \texttt{config\_version} & 参数与规则版本 \\
+    \texttt{data\_version} & 数据快照与可得规则 & \texttt{code\_commit} & 可复现代码提交 \\
+    \texttt{sample\_role} & 训练、验证、测试或最终留出 & \texttt{reason\_before\_run} & 看到结果前的运行理由 \\
+    \texttt{status} & 成功、失败或证据不足 & \texttt{result\_location} & 不覆盖的结构化结果位置 \\
+    \texttt{decision} & 五类阶段状态之一 & \texttt{access\_count} & 测试与留出查看次数 \\
+    \texttt{reviewer\_note} & 独立核验与异议 & \texttt{created\_at} & 登记时间，不替代数据时点 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{practicebox}
+\textbf{[正确实践] 自动核对清单：}研究与实验编号唯一；主配置在运行前冻结；因子、股票池、标签、数据和代码版本非空；信号截止早于标签起点；敏感性候选属于登记集合；探索结果不能写回主结论；测试与最终留出访问次数可追溯；失败实验不被删除；停止状态阻止进入下一阶段。
+\end{practicebox}
+
+\section{一个匿名研究决策案例}
+
+\begin{casebox}
+\textbf{仅用于解释研究设计和决策纪律，不代表真实证券、真实数据库或实证研究结果。}
+
+某研究者提出“某个盈利能力指标可能预测未来相对收益”。错误流程是先尝试多个利润口径，再改变财务滞后和持有期，只保留最有利结果，最后补写经济逻辑。这样无法判断证据来自原想法，还是来自大量未披露选择。
+
+正确流程是先登记盈利能力为何可能与未来相对收益相关，冻结点时可得的利润和权益代理、主标签与股票池，只列少量有理由的敏感性，并事前写清支持、不支持和证据不足。每个失败、报错或不利实验都保留编号；若看到结果后产生新利润口径，它只能成为下一版本的探索性假设，不能反向成为本轮确认性证据。
+\end{casebox}
+
+案例不包含证券、日期、阈值或指标数值，因为本节只演示决策纪律。即使最终结果不支持研究假设，只要数据与实现可信，正确动作也是记录并停止，而不是继续寻找正结果。
+
+\section{YAML/Python 风格最小研究配置}
+
+\cref{lst:ch01-minimal-config} 只展示配置结构。\texttt{ACTUAL\_CONFIRM} 表示在运行真实研究前必须由数据和研究负责人确认，不能原样当作参数。
+
+\begin{lstlisting}[caption={最小研究配置（结构示例，非真实项目参数）},label={lst:ch01-minimal-config}]
+research_config = {
+    "research_id": "RESEARCH_ID_TO_ASSIGN",
+    "universe": {
+        "type": "historical_broad_index_membership",
+        "index_id": "ACTUAL_CONFIRM",
+    },
+    "signal_schedule": {
+        "frequency": "weekly",
+        "cutoff": "last_trading_day_after_close",
+    },
+    "execution_proxy": "ACTUAL_CONFIRM_NEXT_TRADING_DAY_PROXY",
+    "holding_period": "to_next_rebalance_execution_proxy",
+    "factors": ["medium_term_momentum", "book_to_price", "roe_quality"],
+    "primary_metrics": [
+        "coverage", "rank_ic", "group_monotonicity", "exposures",
+        "turnover", "cost_pressure", "robustness", "incremental_value",
+    ],
+    "sensitivity_plan": "PREREGISTERED_NEARBY_SETTINGS_ONLY",
+    "stop_conditions": "VERSIONED_PRINCIPLE_LIST_AND_ACTUAL_GATES",
+    "versions": {
+        "hypothesis": "v1", "data": "ACTUAL_CONFIRM",
+        "universe": "ACTUAL_CONFIRM", "label": "v1", "code": "COMMIT_ID",
+    },
+}
+\end{lstlisting}
+
+\section{常见错误}
+
+\begin{itemize}
+  \item \textbf{把机制当证据：}逻辑合理不能代替覆盖率、方向、稳健性和交易压力检查。
+  \item \textbf{把公式当假设：}一个可运行表达式并未说明预测对象、否定条件或评价规则。
+  \item \textbf{用未来信息修补代理：}财务报告、历史成分或成交状态越过信号截止，会使结论失去时间意义。
+  \item \textbf{用单个平均指标决定去留：}它会掩盖方向翻转、非目标暴露、换手和成本。
+  \item \textbf{把证据不足写成通过：}有效证券或有效期不足时，应返回状态而非放宽分母。
+  \item \textbf{把不支持写成数据问题：}只有可定位错误才允许返工；可信的不利证据必须保留。
+  \item \textbf{让探索结果改写主分析：}看到结果后产生的设定必须新建版本。
+  \item \textbf{以正收益为结业要求：}这会诱导隐藏失败、调参和不诚实的范围扩张。
+\end{itemize}
+
+\section{本章产出}
+
+\begin{outputbox}
+\textbf{[本章产出]} 完成后应保存：一份带唯一 \texttt{research\_id} 和版本号的统一研究任务；三张因子假设卡；主分析与预注册敏感性清单；原则级停止条件；最小实验登记模板；待实际确认的股票池、数据、价格代理、成本、阈值与责任人清单。所有内容均在第一次查看结果前冻结。
+\end{outputbox}
+
+研究任务进入第 2 章的最低门槛不是“看起来会赚钱”，而是每个字段都有明确值或明确的“需实际确认”状态，且支持、不支持、返工和证据不足都能由事前规则产生。
+
+\section{章节自测}
+
+\begin{quizbox}
+\textbf{[章节自测]}
+\begin{enumerate}
+  \item “低估值股票可能反弹”分别需要怎样的机制、代理、标签和否定证据？
+  \item 为什么平均 RankIC 方向有利仍不足以支持 \(H_1\)？
+  \item 主分析、预注册敏感性和探索性分析在何时定义，分别能否改变本轮主结论？
+  \item 发现财务公告时间错误与发现可信结果不支持假设，为什么对应不同阶段状态？
+  \item 下一交易日停牌为什么不能回头删除信号日股票？
+  \item 中期动量、账面市值比和 ROE 各自最需要警惕哪些非目标暴露或数据错误？
+  \item 什么情况下应写“证据不足”，而不是“支持”或“不支持”？
+  \item 为什么测试集被反复用于调参后，不能通过改名恢复其样本外身份？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 2 章《数据与时间边界》的衔接}
+
+本章回答“要研究什么、什么证据会改变决定”；第 \cref{ch:data-timing} 接着回答“在每个历史时点究竟能知道什么”。之后，第 \cref{ch:universe-labels} 冻结历史股票池、可交易边界与收益标签，第 \cref{ch:factor-construction,ch:preprocessing} 实现代理并完成基础处理，第 \cref{ch:single-factor,ch:robustness} 形成单因子与稳健性证据。只有候选因子通过这些前向闸门，才进入第 \cref{ch:factor-combination,ch:portfolio,ch:backtest} 的合成、组合和含成本回测。
+
+因此，下一章不会先读取结果，而会从字段级时间语义开始：观察日期、报告期、公告日期、数据可得日期、生效日期、修订版本与信号截止时间。若这些边界不能被恢复，本章写得再漂亮的假设也无法得到可信检验。
