@@ -1,5 +1,533 @@
 \chapter{单因子检验与可交易性诊断}
+\label{ch:single-factor}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+前四章已经依次冻结了点时信息边界、信号日股票池、周度未来收益标签、原始因子定义和主基线预处理版本。本章第一次把因子与未来标签连接起来，回答一个有限而关键的问题：\keyterm{一个因子是否具有稳定、可解释且具有基本可交易性的横截面预测信息？}
+
+这里的“有效”不能由一个平均 RankIC、一次头尾组差值或一条累计曲线决定。因子可能有预测排序，却只覆盖少量证券；也可能分组单调，但暴露集中于小盘、单一行业或低流动性样本；还可能在纸面上有差异，却因排名快速变化和高换手无法覆盖成本。因此，本章把证据拆成覆盖率、预测力、暴露、换手与成本五个相互制约的维度，并保留不能下结论的状态。
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 说明单因子检验的冻结输入、允许输出与禁止回改项；
+  \item 按信号日计算覆盖率、IC、RankIC、分组收益和单调性；
+  \item 识别样本不足、常数截面、大量并列、空组和标签缺失等退化状态；
+  \item 区分研究诊断组合、诊断多空头尾差与真实约束型多头组合；
+  \item 测量因子自相关、排名变化和顶部分组成员变化，并与组合换手区分；
+  \item 检查行业、市值、流动性和波动暴露及其点时边界；
+  \item 使用成本敏感性与不可交易状态比例进行基础可交易性诊断；
+  \item 将证据整理为标准报告，并给出继续、返工、停止或证据不足的阶段结论。
+\end{enumerate}
+
+\begin{principlebox}
+[通用原则] 单因子检验是对冻结版本的评价，不是继续调因子的入口。看到结果后，不得回到第 4、5 章修改公式、方向、回看窗口、缩尾阈值、缺失处理、标准化或中性化方法；需要修复实现或数据问题时，必须生成新版本并重新走完证据链。
+\end{principlebox}
+
+本章不进行参数搜索、完整样本外稳健性矩阵、多因子合成、组合优化或正式策略回测。时间切分与反过拟合属于第 7 章，多因子与组合问题留待第 8—10 章。
+
+\section{为什么单一指标不能证明因子有效}
+
+平均 RankIC 只概括“因子排序与未来收益排序平均是否同向”，并不说明这种关系是否覆盖足够多证券、是否在不同时间段持续、是否具有分组单调性，也不说明信号能否以合理换手和成本转成真实持仓。反过来，一次最高组减最低组为正，也可能来自极少日期、极端样本或某个非目标暴露。
+
+单因子检验需要一条从输入质量到阶段决策的证据链。\cref{fig:ch06-evidence-chain} 中每一步都可以否决过早结论：覆盖率异常时，后续统计可能代表被选择过的子样本；暴露无法解释时，预测力来源尚不清楚；换手与成本压力过高时，统计关系不等于可实现收益。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=2.6mm,
+    every node/.style={font=\footnotesize},
+    quantEvidenceStep/.style={quantCard, text width=2.15cm, minimum height=1.45cm, align=center},
+    quantEvidenceInput/.style={quantBlueCard, text width=2.15cm, minimum height=1.45cm, align=center},
+    quantEvidenceDecision/.style={quantGreenCard, text width=2.15cm, minimum height=1.45cm, align=center}
+  ]
+    \node[quantEvidenceInput] (input) {冻结输入\\股票池、标签与因子版本};
+    \node[quantEvidenceStep, right=of input] (coverage) {覆盖率与分布\\样本损失};
+    \node[quantEvidenceStep, right=of coverage] (prediction) {IC、RankIC\\分组与单调性};
+    \node[quantEvidenceStep, right=of prediction] (exposure) {行业、规模\\流动性与波动};
+    \node[quantEvidenceStep, right=of exposure] (trading) {自相关、换手\\成本与可成交性};
+    \node[quantEvidenceDecision, right=of trading] (decision) {阶段结论\\与不确定性};
+
+    \draw[quantArrow] (input) -- (coverage);
+    \draw[quantArrow] (coverage) -- (prediction);
+    \draw[quantArrow] (prediction) -- (exposure);
+    \draw[quantArrow] (exposure) -- (trading);
+    \draw[quantArrow] (trading) -- (decision);
+  \end{tikzpicture}
+  \caption{单因子检验的证据链（结构示意，非实证结果）}
+  \label{fig:ch06-evidence-chain}
+\end{figure}
+
+\cref{tab:ch06-five-dimensions} 将五个维度放在同一决策框架中。阈值和优先级应在评价前写入配置；表中没有“平均值为正即通过”的捷径。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{覆盖率—预测力—暴露—换手—成本五维评价框架}
+  \label{tab:ch06-five-dimensions}
+  \begin{tabularx}{\textwidth}{p{2.1cm} p{3.4cm} Y Y}
+    \toprule
+    维度 & 核心问题 & 最小证据 & 不能替代的检查 \\
+    \midrule
+    覆盖率 & 冻结信号池中有多少记录可评价 & 按日、行业、市值层及缺失原因统计 & 平均覆盖率不能掩盖持续下降或局部分层缺失 \\
+    预测力 & 因子与未来标签是否稳定同向 & IC、RankIC、分期统计、分组单调性 & 平均相关不能替代时间稳定性与样本状态 \\
+    暴露 & 结果是否由非目标风险或样本特征驱动 & 行业、对数市值、流动性、波动诊断 & 暴露下降不自动证明因子更优 \\
+    换手 & 因子排序和顶部成员是否快速变化 & 跨期相关、排名变化、顶部分组换手 & 因子换手不等于真实组合换手 \\
+    成本 & 纸面差异在基本交易摩擦下是否脆弱 & 流动性分层、不可成交比例、成本敏感性、集中度 & 代理诊断不等于正式含成本回测 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{单因子检验的输入和冻结边界}
+
+评价函数只接受已经冻结的四类输入：第 3 章的信号日股票池快照与周度标签；第 4 章的原始因子版本；第 5 章的主基线处理后版本；以及少量在评价前登记的敏感性版本。稳定连接键至少包含
+\texttt{security\_id}、\texttt{signal\_date} 和明确的因子、标签与预处理版本。连接前后都要检查唯一性和未匹配记录，不能先做内连接再假装样本从未丢失。
+
+因子记录必须注明信号截止、输入最晚可得时点、\texttt{direction\_sign}、\texttt{factor\_version} 与 \texttt{preprocess\_version}；标签必须注明窗口起止、价格代理版本和缺失原因。标签起点应严格晚于信号截止，并与 \cref{eq:ch03-weekly-label} 的冻结定义一致。行业、市值、流动性和波动暴露也只能使用信号日及以前可得的版本。
+
+\begin{warningbox}
+禁止在评价函数中重新缩尾、排名、标准化、中性化、填补缺失或翻转方向。否则“被评价对象”会随评价结果变化，原始版本、主基线版本和敏感性版本也将失去可比性。
+\end{warningbox}
+
+评价输出必须保留状态而不只保留数字，例如
+\texttt{OK}、\texttt{INSUFFICIENT\_N}、\texttt{CONSTANT\_FACTOR}、
+\texttt{CONSTANT\_LABEL}、\texttt{MANY\_TIES}、\texttt{EMPTY\_GROUP} 和
+\texttt{VERSION\_MISMATCH}。一个缺失 IC 只有配合状态和当期样本数，才具有可解释性。
+
+\section{覆盖率与分布稳定性}
+
+本章继续使用 \cref{eq:ch05-coverage}：分母始终是当期冻结的
+\(\mathcal{U}^{\mathrm{signal}}_t\)，分子是因子版本在该日满足有效条件且有有限数值的证券数。连接标签后还应另报\keyterm{可评价覆盖率}，即同时具有冻结因子值和冻结标签的记录占信号池比例。两者不能合并成一个数字，因为前者诊断因子输入，后者还包含标签损失。
+
+覆盖率需要沿三个方向展开。时间维度检查长期趋势、突然断点和连续低覆盖区间；行业维度检查财务或分类特征是否系统性排除某些行业；市值层维度检查结果是否只代表某一规模区间。平均覆盖率看似稳定，而低流动性或小市值层持续缺失，仍可能改变因子适用范围。
+
+分布稳定性不要求每期均值和标准差完全一致，而是要求变化能够被解释。应报告当期样本数、缺失原因、预设分位数、并列比例、极端值处理比例和退化状态，并对跳变日期回查数据版本、股票池和预处理参数。不能只在“因子值与标签值的交集”上汇总后省略交集外的样本损失。
+
+\section{IC 与 RankIC}
+
+令 \(f_{i,t}\) 为证券 \(i\) 在信号日 \(t\) 的冻结因子值，\(y_{i,t}\) 为同一证券和信号日对应的未来收益标签，令 \(\mathcal{E}_t\) 为两者都有效的当期可评价集合。横截面 Pearson IC 定义为
+
+\begin{equation}
+  \mathrm{IC}_t
+  =
+  \operatorname{Corr}_{i\in\mathcal{E}_t}
+  \left(f_{i,t},y_{i,t}\right).
+  \label{eq:ch06-ic}
+\end{equation}
+
+RankIC 则先在同一信号日内分别排名，再计算相关：
+
+\begin{equation}
+  \mathrm{RankIC}_t
+  =
+  \operatorname{Corr}_{i\in\mathcal{E}_t}
+  \left(operatorname{rank}_t(f_{i,t}),
+  \operatorname{rank}_t(y_{i,t})\right).
+  \label{eq:ch06-rankic}
+\end{equation}
+
+Pearson IC 对数值距离和极端观察更敏感；RankIC 主要评价排序关系，对单调但非线性的关系更稳健。主教学基线可采用 RankIC，同时保留 Pearson IC 作为结构对照。两者都必须逐信号日独立计算，不能把所有日期堆在一起得到一个混合相关系数。
+
+当样本数低于冻结下限、因子或标签为常数、并列比例超过阈值、非有限值过多时，应返回明确状态。并列排名方法必须固定；因子方向必须与定义卡一致，不能因平均 IC 为负而在本章翻转。平均 IC 也不能直接解释为可交易收益，因为相关系数没有权重、成交与成本语义。
+
+\begin{teachingbox}
+[教学简化] 本章以逐周 RankIC 为主线，并列值采用配置中的固定方法，最小样本数和并列比例阈值均由预注册配置给出。时间相关会使普通独立同分布假设下的 t 统计过于乐观；本章只披露这一限制，不展开 Newey--West 等进阶修正。
+\end{teachingbox}
+
+\section{IC 时间序列与分期统计}
+
+逐期 IC 序列比单一均值包含更多信息。应同时检查可计算期数、均值、中位数、离散程度、同号比例、连续异常区间和状态分布，并按预先冻结的时间段汇总。分期目的在于观察稳定性和失效边界，不是看完结果后寻找最漂亮的起止日期。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{IC 与 RankIC 时间序列统计模板（结构模板，非实证结果）}
+  \label{tab:ch06-ic-template}
+  \begin{tabularx}{\textwidth}{p{2.3cm} p{1.5cm} p{1.4cm} p{1.4cm} p{1.5cm} p{1.8cm} Y}
+    \toprule
+    期间/版本 & 有效期数 & 均值 & 中位数 & 标准差 & 同号比例 & 状态与主要异常 \\
+    \midrule
+    全期：原始版本 & -- & -- & -- & -- & -- & -- \\
+    全期：主基线 & -- & -- & -- & -- & -- & -- \\
+    预注册子期 A & -- & -- & -- & -- & -- & -- \\
+    预注册子期 B & -- & -- & -- & -- & -- & -- \\
+    敏感性版本 & -- & -- & -- & -- & -- & -- \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+若报告普通均值 t 统计，必须同时写明它未充分处理 IC 序列自相关和异方差，不能把它当作最终显著性证据。还应列出 IC 无法计算的日期及原因；只统计成功日期会让数据问题从报告中消失。
+
+\section{分组收益与单调性}
+
+分组检验把当期处理后因子按固定方向划入 \(G\) 个组，并比较各组未来标签的均值或等权诊断组合收益。分组边界必须逐信号日计算，组数、并列值规则、最小组内样本数和空组处理都要预先固定。若并列值不能拆分，允许出现不等组或空组，但必须报告状态，不能通过随机打散制造整齐分组。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{分组收益与单调性模板（结构模板，非实证结果）}
+  \label{tab:ch06-group-template}
+  \begin{tabularx}{\textwidth}{p{1.45cm} p{1.65cm} p{2.0cm} p{2.1cm} p{2.2cm} Y}
+    \toprule
+    因子组 & 当期样本数 & 标签覆盖率 & 平均未来标签 & 分期稳定性 & 状态/并列说明 \\
+    \midrule
+    G1（低） & -- & -- & -- & -- & -- \\
+    G2 & -- & -- & -- & -- & -- \\
+    G3 & -- & -- & -- & -- & -- \\
+    G4 & -- & -- & -- & -- & -- \\
+    G5（高） & -- & -- & -- & -- & -- \\
+    高减低诊断差 & -- & -- & -- & -- & 仅研究诊断 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+单调性要求各组结果大体随因子方向有序，而不是只看最高组与最低组之差。报告可同时列出相邻组差值、顺序违反次数和不同时间段的组序稳定性。头尾差若只由中间组混乱、极少日期或某个行业驱动，证据仍然不完整。
+
+\section{研究诊断组合与真实可交易组合的区别}
+
+分组收益常把每个信号日的证券按因子排序，构造等权组，再使用冻结未来标签计算纸面收益。它的作用是诊断横截面响应形状，不包含真实订单、不可成交、旧持仓延续、现金、行业和个股约束，也通常不包含完整成本模型。
+
+最高组减最低组的多空头尾差同样只是研究诊断。本项目最终目标是不加杠杆、不做空的约束型多头组合，因此不得把诊断多空差称为产品收益、策略净收益或可执行组合表现。真实组合还需经过第 9 章的选股与权重约束，并在第 10 章按下一交易日状态、成交代理和实际持仓账本回测。
+
+\begin{principlebox}
+[通用原则] 因子诊断组合回答“排序是否对应未来标签差异”，真实可交易组合回答“在约束、成交和成本下实际持有什么并获得什么结果”。两者的权重、状态和收益口径必须分表保存、分名报告。
+\end{principlebox}
+
+\section{因子自相关与因子换手}
+
+因子值跨期相关描述同一批证券的信号稳定性。令
+\(\mathcal{O}_t\) 为相邻两个信号日均有有效值的证券交集，可定义
+
+\begin{equation}
+  \rho^{\mathrm{factor}}_t
+  =
+  \operatorname{Corr}_{i\in\mathcal{O}_t}
+  \left(f_{i,t},f_{i,t^-}\right),
+  \label{eq:ch06-factor-autocorr}
+\end{equation}
+
+其中 \(t^-\) 是前一个预定信号日。也可以对排名计算相同指标，并报告证券逐期绝对排名变化。交集覆盖率必须同时给出，否则高相关可能只来自少数长期有值证券。
+
+若 \(\mathcal{G}^{\mathrm{top}}_t\) 是当期顶部分组，简单的顶部分组单边成员换手代理可写为
+
+\begin{equation}
+  \mathrm{Turnover}^{\mathrm{top}}_t
+  =
+  1-
+  \frac{
+    \left|\mathcal{G}^{\mathrm{top}}_t
+    \cap \mathcal{G}^{\mathrm{top}}_{t^-}\right|
+  }{
+    \left|\mathcal{G}^{\mathrm{top}}_{t^-}\right|
+  }.
+  \label{eq:ch06-top-turnover}
+\end{equation}
+
+分母为零、组规模变化或前期缺失时必须返回状态。高预测力但排名剧烈变化的因子可能需要频繁交易；然而高因子自相关也不必然带来低组合换手，因为选股阈值附近的小变化、行业约束和旧持仓都会改变订单。\cref{eq:ch06-top-turnover} 是因子层代理，不能标为组合换手。
+
+\section{行业、市值、流动性和波动暴露}
+
+暴露诊断的目的不是机械地把所有关系去掉，而是解释预测力可能来自哪里。行业诊断应比较全信号池、各因子组和高分股票的历史行业分布，并检查行业内 RankIC 或组差是否方向一致。市值、流动性和波动可以通过逐日相关、分层汇总或简单截面回归描述。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{风险与交易暴露诊断模板（结构模板，非实证结果）}
+  \label{tab:ch06-exposure-template}
+  \begin{tabularx}{\textwidth}{p{2.0cm} p{3.0cm} p{3.1cm} Y}
+    \toprule
+    暴露 & 最小诊断 & 需要解释的现象 & 点时与状态检查 \\
+    \midrule
+    行业 & 组内分布、行业均值、行业内 RankIC & 是否由少数行业或行业权重驱动 & 历史分类区间覆盖信号日 \\
+    对数市值 & 逐日相关、分层与回归系数 & 是否集中于小盘或规模端点 & 市值观察和可得日不晚于信号日 \\
+    流动性 & 成交额或其他冻结代理分层 & 高分样本是否集中于低流动性层 & 历史窗口在信号日截止，口径需确认 \\
+    波动率 & 历史波动分层与逐日相关 & 预测力是否只是高波动补偿或极端期现象 & 波动窗口不含标签期 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+第 5 章已经对某些版本做过行业或市值处理时，本章仍需检查剩余暴露，因为残差化可能退化、样本结构可能变化，流动性与波动也未必在处理模型中。暴露本身不是自动错误；错误是看见暴露后临时重做中性化，并只保留结果较好的版本。
+
+\begin{confirmbox}
+[需实际确认] 行业体系与层级、市值口径、流动性代理、历史波动窗口、分层边界和缺失状态依赖数据源与研究配置。所有暴露输入必须满足点时要求，不能使用当前分类或未来成交额回填历史。
+\end{confirmbox}
+
+\section{成本与可交易性代理}
+
+在正式组合回测之前，可以用因子换手、顶部分组换手、流动性分层、不可成交状态比例和高分股票集中度识别明显的实现压力。成本敏感性只使用配置中的单边成本假设，并把结果称为\keyterm{诊断成本代理}。
+
+若 \(D^{\mathrm{gross}}_t\) 是研究头尾组的纸面差异，可用
+
+\begin{equation}
+  D^{\mathrm{proxy}}_t(c)
+  =
+  D^{\mathrm{gross}}_t
+  -c\left(
+    \mathrm{Turnover}^{\mathrm{top}}_t
+    +\mathrm{Turnover}^{\mathrm{bottom}}_t
+  \right)
+  \label{eq:ch06-cost-proxy}
+\end{equation}
+
+做简单敏感性检查，其中 \(c\) 只能来自版本化配置。\cref{eq:ch06-cost-proxy} 没有模拟实际订单、方向不对称费用、冲击、部分成交或旧持仓，因此不得称为正式成本后收益。
+
+不可成交比例需要保留分母语义：它可以针对候选订单、顶部分组或全部信号池分别报告，不能混为一个比例。高分股票集中度还应同时按证券、行业和流动性层检查；若少数低流动性证券贡献大部分诊断差异，即使平均 RankIC 为正，也需要在结论中明确其可交易性不确定。
+
+\section{原始版本、主基线版本和预注册敏感性版本的比较}
+
+版本比较用于回答“透明处理是否改变信号含义”，而不是从多个版本中挑选赢家。原始版本保留公式输出；主基线版本是第 5 章冻结后进入后续流程的主要候选；敏感性版本只包含评价前预注册的少量替代处理。所有版本使用相同股票池、标签、时间段和报告模板。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{三个因子版本的比较框架}
+  \label{tab:ch06-version-comparison}
+  \begin{tabularx}{\textwidth}{p{2.3cm} p{3.0cm} p{3.1cm} Y}
+    \toprule
+    版本 & 主要问题 & 必须保持一致 & 禁止的事后动作 \\
+    \midrule
+    原始版本 & 原公式是否已有可解释信息 & 因子定义、方向、股票池、标签 & 因极端值或 IC 符号临时改公式 \\
+    主基线版本 & 冻结预处理后是否保持并改善可比性 & 主配置、评价区间、状态规则 & 看到结果后改缩尾、填补或中性化 \\
+    预注册敏感性版本 & 结论是否依赖少量合理替代口径 & 预注册清单、共同报告模板 & 批量生成版本后只展示最佳者 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+比较至少报告覆盖率、版本间截面相关、RankIC、分组形状、暴露、换手和成本敏感性。若版本结论差异很大，正确结论通常是“方法依赖强、需要第 7 章稳健性检验”，而不是直接选表现最高的版本。
+
+\section{一个匿名教学案例}
+
+\begin{casebox}
+仅用于解释指标计算和报告结构，不代表真实证券、真实数据库或实证研究结果。
+
+某个匿名信号日的冻结信号池有 8 条记录；原始因子有 7 条有效记录，主基线也保留 7 条，冻结标签有 6 条，因子与标签的稳定主键交集只有 5 条。因而因子覆盖率为 (7/8)，可评价覆盖率为 (5/8)。若配置要求当期至少 6 条可评价记录，则本期 IC 与 RankIC 都必须返回
+\texttt{INSUFFICIENT\_N}，不能用 5 条记录给出伪精确相关。
+
+该日高分候选有 2 条，其中 1 条落在预设低流动性层，且成交状态表显示其中 1 条在下一交易日无法按代理成交。这个状态不会回删信号日记录，也不能在本章被写成真实组合损失；它只进入顶部分组集中度和不可成交比例诊断。仅凭这一日期既不能宣布因子有效，也不能宣布因子失败，阶段状态应为“证据不足”。
+\end{casebox}
+
+这个例子强调三个分母：因子覆盖率以 8 条信号池记录为分母；可评价覆盖率仍以 8 条为分母，但要求因子和标签同时存在；不可成交比例则必须说明是以 2 条高分候选还是其他集合为分母。只保留交集中的 5 条记录，会让另外 3 条样本损失从报告中消失。
+
+\section{pandas 风格最小实现}
+
+\cref{lst:ch06-evaluate} 展示评价入口的职责边界。辅助函数只在已经冻结的当日截面上计算统计量；它们不得调用第 5 章预处理，也不得访问未来组合配置。
+
+\begin{lstlisting}[
+  caption={冻结版本的单因子评价最小实现},
+  label={lst:ch06-evaluate}
+]
+import numpy as np
+import pandas as pd
+
+KEY = ["security_id", "signal_date"]
+VERSION = ["factor_version", "preprocess_version"]
+
+def evaluate_single_factor(factor_frame, labels, config):
+    required = set(KEY + VERSION + [
+        "in_signal_universe", "raw_value", "processed_value",
+        "factor_snapshot_time", "signal_cutoff",
+        "direction_sign", "preprocess_frozen",
+    ])
+    assert required.issubset(factor_frame.columns)
+    assert not factor_frame.duplicated(KEY).any()
+    assert not labels.duplicated(KEY).any()
+    assert factor_frame["factor_version"].eq(
+        config["factor_version"]
+    ).all()
+    assert factor_frame["preprocess_version"].eq(
+        config["preprocess_version"]
+    ).all()
+    assert labels["label_version"].eq(config["label_version"]).all()
+    assert factor_frame["preprocess_frozen"].all()
+    assert factor_frame["direction_sign"].eq(
+        config["direction_sign"]
+    ).all()
+    assert (
+        factor_frame["factor_snapshot_time"]
+        <= factor_frame["signal_cutoff"]
+    ).all()
+    assert (labels["label_start"] > labels["signal_cutoff"]).all()
+    assert set(VERSION).issubset(config["frozen_version_fields"])
+    forbidden = {"portfolio_weight", "backtest_result"}
+    assert forbidden.isdisjoint(factor_frame.columns)
+    value_col = config["value_column"]
+    assert value_col in {"raw_value", "processed_value"}
+
+    # Keep unmatched rows auditable before selecting evaluable records.
+    joined = factor_frame.merge(
+        labels,
+        on=KEY,
+        how="left",
+        validate="one_to_one",
+        indicator=True,
+    )
+    outputs = []
+    previous = None
+
+    for signal_date, cs in joined.groupby("signal_date", sort=True):
+        in_universe = cs["in_signal_universe"]
+        denominator = in_universe.sum()
+        factor_ok = in_universe & cs[value_col].notna()
+        label_ok = in_universe & cs["future_return"].notna()
+        evaluable = cs.loc[factor_ok & label_ok].copy()
+
+        result = {
+            "signal_date": signal_date,
+            "signal_count": denominator,
+            "factor_count": int(factor_ok.sum()),
+            "evaluable_count": len(evaluable),
+            "coverage": factor_ok.sum() / denominator,
+            "evaluable_coverage": len(evaluable) / denominator,
+            "unmatched_label_count": int(
+                cs["_merge"].eq("left_only").sum()
+            ),
+            "status": "OK",
+        }
+
+        x = evaluable[value_col]
+        y = evaluable["future_return"]
+        if len(evaluable) < config["min_cross_section"]:
+            result["status"] = "INSUFFICIENT_N"
+        elif x.nunique() < 2:
+            result["status"] = "CONSTANT_FACTOR"
+        elif y.nunique() < 2:
+            result["status"] = "CONSTANT_LABEL"
+        elif 1 - x.nunique() / len(x) > config["max_tie_ratio"]:
+            result["status"] = "MANY_TIES"
+        else:
+            result["ic"] = x.corr(y, method="pearson")
+            result["rank_ic"] = x.corr(y, method="spearman")
+
+            # Ties stay together under a frozen ranking rule.
+            pct_rank = x.rank(
+                method=config["tie_method"], pct=True
+            )
+            evaluable["group"] = np.ceil(
+                pct_rank * config["group_count"]
+            ).clip(1, config["group_count"])
+            group_result = summarize_groups_with_empty_status(
+                evaluable, config
+            )
+            result.update(group_result)
+
+        result.update(exposure_diagnostics_asof(cs, config))
+        result.update(factor_dynamics(previous, cs, config))
+        result.update(cost_and_tradability_proxy(cs, config))
+        outputs.append(result)
+        previous = cs
+
+    # No winsorize, standardize, neutralize, direction flip,
+    # portfolio optimization, or fabricated final conclusion here.
+    return pd.DataFrame(outputs).sort_values("signal_date")
+\end{lstlisting}
+
+代码在内连接之前用 \texttt{indicator} 保留未匹配状态，逐日用信号池计数作分母，并对不足样本和常数截面先返回状态。示例省略了辅助函数细节，但这些函数必须使用固定并列规则、补齐空组状态、验证暴露的点时日期，并把因子换手与组合换手使用不同字段名。
+
+\section{标准单因子报告模板}
+
+标准报告应让另一名研究员在不查看代码作者解释的情况下，知道评价的是哪个版本、用了哪些样本、哪些日期无法计算，以及阶段结论依据是什么。\cref{tab:ch06-report-template} 是最小目录，不是实证结果表。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{标准单因子报告模板}
+  \label{tab:ch06-report-template}
+  \begin{tabularx}{\textwidth}{p{2.6cm} p{4.4cm} Y}
+    \toprule
+    模块 & 必须记录 & 最小审计证据 \\
+    \midrule
+    定义与版本 & 因子名、方向、原始/主基线/敏感性版本 & 定义卡、配置哈希、代码和数据版本 \\
+    样本与覆盖 & 信号池、因子覆盖、可评价覆盖、缺失原因 & 按日、行业、市值层的分母与分子 \\
+    预测力 & IC、RankIC、时间序列和预设分期 & 当期样本数、状态、异常日期清单 \\
+    分组与单调性 & 固定组数、组收益、相邻组差与头尾诊断差 & 边界、并列与空组规则 \\
+    暴露 & 行业、市值、流动性、波动 & 点时字段、分层和剩余暴露说明 \\
+    换手与成本 & 自相关、排名变化、顶部换手、成本敏感性 & 集合交集、成本配置、不可成交比例 \\
+    版本比较 & 原始、主基线与预注册敏感性 & 相同标签、区间与报告口径 \\
+    阶段结论 & 四类结论、主要不确定性与下一闸门 & 逐维证据、反例和责任人核验 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+图表标题必须区分“结构模板”“匿名教学示意”和真实数据输出。没有真实数据时，应交付空模板、状态样例和计算接口，不生成仿真累计曲线或看似真实的业绩百分比。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖以下边界：
+
+\begin{enumerate}
+  \item 因子和标签只能按稳定证券主键与同一信号日连接，跨证券或跨日期连接必须失败；
+  \item 标签起点必须严格晚于信号截止，窗口版本与第 3 章冻结定义一致；
+  \item 因子、预处理和标签版本必须冻结，重复主键或版本不匹配触发失败；
+  \item 评价函数中不得重新缩尾、标准化、中性化、填补或修改方向；
+  \item 常数因子截面返回 \texttt{CONSTANT\_FACTOR}；
+  \item 样本数不足时返回 \texttt{INSUFFICIENT\_N}，不输出伪精确 IC；
+  \item 分组边界逐信号日计算，不能使用全样本分位点；
+  \item 并列值规则固定，空组和小组返回明确状态；
+  \item 缺失因子或标签保留原因和覆盖损失，不能在内连接中静默消失；
+  \item IC 与 RankIC 符号和第 4 章定义卡方向一致，评价阶段不得翻向；
+  \item 研究诊断多空差的字段和图注不得标为实际策略收益；
+  \item 因子换手、顶部分组换手和组合换手使用不同名称与集合定义；
+  \item 行业、市值、流动性和波动输入均满足点时可得要求；
+  \item 成本参数只能来自版本化配置，不能写死在评价函数中；
+  \item 相同输入、版本和配置生成相同排序、分组、状态与输出。
+\end{enumerate}
+
+\begin{practicebox}
+人工穿行至少选择三个信号日：一个正常截面、一个样本不足或常数截面、一个存在标签缺失或成交受阻的截面。每个日期抽取若干匿名证券，核对稳定主键、信号截止、因子版本、标签窗口、覆盖分母、排名与并列、分组、行业与市值、流动性与波动输入、上一期成员关系、成本配置和最终状态。另由核验人手算一个可计算截面的 Pearson IC、RankIC 和顶部分组换手，并记录程序差异。
+\end{practicebox}
+
+人工核对还应从报告数字反向追溯到原始记录。若某期 RankIC 无值，要能判断是样本不足、常数因子、常数标签还是版本连接失败；若某组为空，要能还原当期并列排名和组边界，而不是只接受一个空单元格。
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：只在因子与标签交集上报告覆盖率；把所有日期堆叠计算一个相关；用平均 RankIC 代替时间稳定性；样本不足或常数截面仍返回数值；用全样本分位点分组；随机拆分并列值；只看头尾差而忽略中间组；把诊断多空差称为真实策略收益；把因子换手当作组合换手；用当前行业或未来流动性解释历史；看见暴露后临时重新中性化；按 IC 符号翻转因子；从多个版本中只展示最好者；以及把成本代理称为正式含成本回测。
+\end{warningbox}
+
+这些错误会让报告比实现更确定。修复时应先恢复冻结版本、分母和状态，再重建当期截面；不能通过删除异常日期、减少组数或更改阈值来让表格看起来完整。
+
+\section{阶段结论：继续、返工、停止或证据不足}
+
+每个因子的阶段结论只能使用以下四类，并同时说明覆盖率、预测力、单调性、风险暴露、换手、成本敏感性、可交易性和主要不确定性：
+
+\begin{itemize}
+  \item \textbf{继续进入稳健性检验：}五维证据在预注册标准下基本一致，主要暴露与交易压力可解释，但尚未经过第 7 章样本外与稳健性检验；
+  \item \textbf{返回实现或数据问题修复：}发现点时、主键、版本、覆盖断点、标签或状态编码问题。修复后生成新版本并完整重跑，不沿用旧结论；
+  \item \textbf{暂停或停止：}在数据与实现可信的前提下，预注册证据持续不支持假设，或可交易性约束与研究目标明显冲突；
+  \item \textbf{证据不足：}有效期数、截面样本、历史版本或交易状态覆盖不足，当前既不能支持也不能否定假设。
+\end{itemize}
+
+\begin{principlebox}
+阶段结论必须把观察事实、基于事实的推断、仍需验证的假设、可执行建议和局限分开。平均 RankIC 为正最多是一项观察，不足以单独宣布因子有效；教学案例更不能成为实证结论。
+\end{principlebox}
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：冻结的单因子评价配置；覆盖率与分布报告；逐期 IC、RankIC 及状态表；分组收益与单调性表；研究诊断组合口径说明；因子自相关、排名变化和顶部分组换手；行业、市值、流动性与波动暴露诊断；成本敏感性、不可成交比例与集中度代理；原始、主基线和预注册敏感性版本对比；标准单因子报告；自动测试结果；人工穿行记录；以及四类之一的阶段结论与不确定性说明。
+\end{outputbox}
+
+这些产出用于决定是否进入第 7 章，不包含参数择优、多因子权重、真实目标持仓或正式含成本策略回测。仓库没有真实金融数据时，只交付结构模板、匿名教学示意和可运行接口，不填写实证结果。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 为什么因子覆盖率和可评价覆盖率需要分别报告？二者的分母是什么？
+  \item Pearson IC 与 RankIC 分别保留什么信息？为什么必须逐信号日计算？
+  \item 哪些退化状态应使当期 IC 返回状态而不是数字？
+  \item 分组边界和并列值规则为什么不能根据当期结果临时改变？
+  \item 为什么头尾组多空差不能称为本项目真实策略收益？
+  \item 因子自相关高时，真实组合换手是否一定低？为什么？
+  \item 第 5 章已经做过市值残差化后，本章为什么仍要检查剩余市值暴露？
+  \item \cref{eq:ch06-cost-proxy} 缺少哪些真实回测要素？
+  \item 原始、主基线和敏感性版本比较时，哪些输入必须保持一致？
+  \item 什么情况下应给出“返回实现或数据问题修复”，什么情况下应给出“证据不足”？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 7 章《稳健性、样本外与反过拟合》的衔接}
+
+本章把单因子评价口径、报告模板和阶段闸门冻结下来。进入第 7 章的因子只能携带已经登记的公式、方向、预处理和评价配置，不能因为本章某个分期较弱而重新选择窗口或删改样本。
+
+第 7 章将进一步检查时间切分、滚动稳定性、不同市场阶段、股票池、持有期和少量预注册参数扰动，并记录多重尝试。若本章结论为“返回实现或数据问题修复”，应先完成新版本的全链条复核；若为“证据不足”，应明确缺少什么数据或历史证据，而不是把样本外检验当作继续试参的理由。
