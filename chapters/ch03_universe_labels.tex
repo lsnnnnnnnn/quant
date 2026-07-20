@@ -1,5 +1,385 @@
 \chapter{股票池、可交易边界与收益标签}
+\label{ch:universe-labels}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:data-timing} 已经建立点时信息集：站在任一历史时点，只允许使用当时已经可得的信息。本章在这一基础上继续回答两个更具体的问题：信号日的横截面究竟由哪些证券构成，以及每条信号记录应该对应哪一段未来收益。这里最重要的不是记住一份过滤清单，而是把\keyterm{样本资格、目标决策、成交结果和持仓状态}分开保存。
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 用历史宽基成分和稳定证券标识重建信号日基础股票池；
+  \item 判断一条规则应在信号截止前、目标组合生成时，还是下一交易日成交时生效；
+  \item 区分研究股票池、信号有效股票池、目标组合候选、成交日可交易集合与实际持仓；
+  \item 为每次纳入、剔除、未成交与持仓延续记录原因码；
+  \item 生成周度信号日、成交代理时点和非重叠标签窗口；
+  \item 区分标签缺失、订单无法成交、证券退市和实际持仓延续；
+  \item 通过边界测试和人工穿行检查，证明没有用未来状态改写过去样本。
+\end{enumerate}
+
+\begin{principlebox}
+[通用原则] 证券是否属于信号日股票池，只能由信号截止及以前的信息决定。下一交易日才出现的停牌、价格限制、成交价格缺失等状态，只能在成交模拟阶段处理；它们不能反向删除已经生成的信号日记录。
+\end{principlebox}
+
+\section{横截面样本为什么不仅是一张股票列表}
+
+一张只含\texttt{signal\_date}和\texttt{security\_id}的列表，无法说明证券为何出现、何时被排除，也无法区分“研究时存在但后来无法买入”和“研究时本就不属于样本”。如果直接把最终成交证券当作因子研究样本，下一交易日的状态就会倒流到信号日，样本分布也随之被未来信息改变。
+
+可审计的横截面底表应至少同时保留三类信息。第一类是\keyterm{成员证据}，说明证券在信号日是否属于历史基础池；第二类是\keyterm{信号日资格证据}，说明只利用信号截止前信息应用过滤后的结果；第三类是\keyterm{后续事件证据}，记录目标权重、订单、成交、未成交原因和实际持仓。它们可以通过稳定主键关联，却不应压缩成一个会被后续状态覆盖的布尔列。
+
+\begin{teachingbox}
+[教学简化] 贯穿案例继续采用“宽基股票池三因子周频约束多头策略”：每周最后一个交易日收盘后生成信号，下一交易日使用可配置的日频价格代理模拟成交。本章只讨论集合、时点和标签，不预设真实指数、价格字段或交易制度细节。
+\end{teachingbox}
+
+\section{研究股票池、信号有效股票池、目标组合候选、成交日可交易集合和实际持仓的区别}
+
+令 \(t\) 表示某次周度信号日，令 \(\tau(t)\) 表示与该信号对应的下一交易日成交代理时点。研究流程中至少存在以下五个集合：
+
+\begin{itemize}
+  \item \(\mathcal{U}^{\mathrm{research}}_t\)：信号日的历史研究股票池，以当时有效的宽基成分为起点；
+  \item \(\mathcal{U}^{\mathrm{signal}}_t\)：仅用信号截止及以前信息过滤后，允许计算和比较信号的证券；
+  \item \(\mathcal{C}_t\)：经因子得分、排序和组合约束后进入目标组合候选的证券；
+  \item \(\mathcal{X}_{\tau(t)}\)：到成交阶段依据当时交易状态与成交代理可用性判断的可执行证券；
+  \item \(\mathcal{H}_{\tau(t)}\)：订单执行后真正持有的证券，包括本次成交形成的持仓以及因无法卖出而延续的旧持仓。
+\end{itemize}
+
+\cref{fig:ch03-universe-hierarchy} 展示了五个集合的职责边界。前两个集合决定研究横截面，目标候选表达“想持有什么”，成交日集合表达“此刻能做什么”，实际持仓则表达“最终发生了什么”。它们通常相互关联，但不能假定逐层都是简单子集：例如原持仓无法卖出时，它可能不再属于本期目标候选，却仍然留在实际持仓中。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=6mm,
+    every node/.style={font=\small},
+    flow/.style={bluecard, minimum width=7.2cm, align=center},
+    note/.style={card, text width=5.5cm, align=left}
+  ]
+    \node[flow] (research) {历史研究股票池\\\(\mathcal{U}^{\mathrm{research}}_t\)};
+    \node[flow, below=of research] (signal) {信号有效股票池\\\(\mathcal{U}^{\mathrm{signal}}_t\)};
+    \node[flow, below=of signal] (candidate) {目标组合候选\\\(\mathcal{C}_t\)};
+    \node[orangecard, minimum width=7.2cm, align=center, below=of candidate]
+      (execution) {成交日可执行集合\\\(\mathcal{X}_{\tau(t)}\)};
+    \node[greencard, minimum width=7.2cm, align=center, below=of execution]
+      (holding) {订单处理后的实际持仓\\\(\mathcal{H}_{\tau(t)}\)};
+
+    \node[note, right=7mm of research] {历史成分与信号日前已生效主数据};
+    \node[note, right=7mm of signal] {只用 \(\mathcal{I}_t\) 过滤，保留原因码};
+    \node[note, right=7mm of candidate] {因子排序与组合约束给出目标};
+    \node[note, right=7mm of execution] {此处才读取下一交易日交易状态};
+    \node[note, right=7mm of holding] {成交、未成交与旧持仓延续共同决定};
+
+    \draw[myarrow] (research) -- (signal);
+    \draw[myarrow] (signal) -- (candidate);
+    \draw[myarrow] (candidate) -- (execution);
+    \draw[myarrow] (execution) -- (holding);
+  \end{tikzpicture}
+  \caption{研究池、信号池、目标组合、成交与实际持仓的层级关系}
+  \label{fig:ch03-universe-hierarchy}
+\end{figure}
+
+\section{使用历史宽基成分构建信号日基础股票池}
+
+贯穿案例的基础池来自可配置宽基指数的\keyterm{历史成分记录}。对每个信号日 \(t\)，应选择在该日已经生效、且有效区间覆盖 \(t\) 的成员记录，形成 \(\mathcal{U}^{\mathrm{research}}_t\)。成员表需要保留来源版本、生效区间和匹配依据，使任一历史横截面能够重放。
+
+这里不能用今天的指数成分覆盖过去，也不能先取今天仍存续的证券再向历史回填。前者会遗漏历史上被调出的证券，后者会遗漏后来退市或代码变化的证券，两者都会造成幸存者偏差。第 \cref{ch:data-timing} 已解释点时连接与生效区间，本节只强调其集合含义：\keyterm{基础池是按信号日逐期生成的历史状态，而不是一张静态名单。}
+
+\begin{warningbox}
+用当前成分或当前存续股票列表重建历史，会把“后来留下来”误写成“当时就应被研究”。即使因子值和收益标签都没有显式引用未来日期，这种样本选择本身也已经使用了未来信息。
+\end{warningbox}
+
+\section{稳定证券标识、上市、退市和代码变更}
+
+证券代码是展示标识，不一定适合作为跨期唯一主键。研究底表应使用能够跨代码变更保持一致、同时区分不同证券实体的稳定标识，再通过带生效区间的映射表获取某日代码。这样，代码变化不会把一条证券历史拆成两只“新证券”，代码复用也不会错误拼接不同实体。
+
+上市和退市同样应作为有时间边界的主数据事件。信号日之前尚未上市的证券不属于当期样本；信号日仍有效、后来退市的证券不能因为最终结局而从历史中消失。退市后的估值、最后可交易时点、现金或其他公司行动如何进入标签与持仓账本，需要另行确定，但原始成员记录和信号记录必须保留。
+
+\begin{confirmbox}
+[需实际确认] 应核验数据源的稳定证券主键、代码变更映射、生效时间精度、上市与退市字段语义，以及公司行动后的价格和持仓调整方式。[机构实现] 这些字段在生产表中的名称、版本和关联键也必须由团队数据字典给出，本章不作推断。
+\end{confirmbox}
+
+\section{信号日前可得的过滤规则}
+
+过滤规则的判断标准不是“它看起来像交易限制”，而是\keyterm{该条件在什么时点可知，以及它改变哪个对象}。若某项状态在信号截止前已经生效，并且研究方案预先约定把它排除在因子比较范围之外，它可以改变 \(\mathcal{U}^{\mathrm{signal}}_t\)。若状态直到 \(\tau(t)\) 才能观察到，它只能改变订单是否成交，不能改写 \(\mathcal{U}^{\mathrm{signal}}_t\)。
+
+\cref{tab:ch03-filter-timing} 给出规则归属。表中“可使用”是时间约束，并不代表一定应该过滤；是否启用、阈值多少以及异常如何处理，仍由研究协议决定。
+
+{
+\setlength{\tabcolsep}{3.2pt}
+\small
+\begin{longtable}{p{2.35cm} p{2.75cm} p{2.65cm} p{2.8cm} p{3.55cm}}
+\caption{过滤规则及其生效时点}\label{tab:ch03-filter-timing}\\
+\toprule
+条件类别 & 信号日可得证据 & 应影响的阶段 & 不应执行的操作 & 口径状态 \\
+\midrule
+\endfirsthead
+\toprule
+条件类别 & 信号日可得证据 & 应影响的阶段 & 不应执行的操作 & 口径状态 \\
+\midrule
+\endhead
+历史宽基成员 & 覆盖 \(t\) 的已生效历史成分 & 研究股票池 & 用当前成分回填历史 & [通用原则] \\
+上市状态 & 截止 \(t\) 已生效的证券主数据 & 研究池或信号池 & 用未来退市结果删除过去 & 字段语义需确认 \\
+上市时间长度 & 截止 \(t\) 可计算的历史长度 & 信号池 & 把未确认阈值写成统一规则 & 阈值需确认 \\
+特殊处理状态 & 截止 \(t\) 已生效且当时可知的状态 & 信号池（若协议启用） & 使用后来补记状态提前过滤 & 状态与生效时间需确认 \\
+历史停牌状态 & 截止 \(t\) 已知的历史记录 & 信号池（若协议启用） & 把 \(\tau(t)\) 状态提前到 \(t\) & 过滤目的需确认 \\
+历史流动性 & 以 \(t\) 或更早结束的历史窗口 & 信号池或目标约束 & 使用未来成交量计算窗口 & 窗口与阈值需确认 \\
+成交日停牌 & 到 \(\tau(t)\) 才确定的状态 & 成交模拟 & 回删信号日样本或因子值 & [通用原则] \\
+成交日价格限制 & 到 \(\tau(t)\) 才确定的状态 & 成交模拟 & 回删目标候选与信号记录 & 规则与字段需确认 \\
+成交价格代理缺失 & 成交阶段观察到的价格可用性 & 成交与标签状态 & 把缺失解释为历史不存在 & 代理与缺失语义需确认 \\
+\bottomrule
+\end{longtable}
+}
+
+\section{上市时间、特殊处理状态、停牌、价格限制和流动性条件的时点问题}
+
+上市时间长度可以由信号日前已知的上市日期计算，因此从时间上可以作为信号日过滤；但最低历史长度并非天然常数。特殊处理状态也只有在其状态及生效时间于信号截止前可知时，才可能进入信号池过滤。是否过滤以及如何处理状态变更，是研究口径，而不是本章替团队做出的制度判断。
+
+停牌需要区分两个问题：信号日以前的历史停牌记录可能影响因子覆盖或预设资格；下一交易日是否停牌则只决定订单能否执行。价格限制同理，成交日的状态不能反向参与信号样本选择。流动性条件还要区分以历史窗口度量的候选资格与成交日实际容量：前者的窗口必须在 \(t\) 截止，后者属于执行模拟。
+
+\begin{confirmbox}
+[需实际确认] 上市时间阈值、特殊处理状态的定义与生效时点、停复牌记录语义、价格限制判断、历史流动性窗口、成交量约束及具体成交价格代理，都依赖研究时期、交易所规则、数据供应商和团队协议。实施前应逐项核验原始字段、时间戳、缺失含义与历史制度版本。
+\end{confirmbox}
+
+\section{为什么不能用下一交易日状态反向删除信号日证券}
+
+假设匿名证券在信号日 \(t\) 属于历史成分，且使用 \(\mathcal{I}_t\) 计算出的因子数据完整。它因此合法地属于 \(\mathcal{U}^{\mathrm{signal}}_t\)。若到 \(\tau(t)\) 才发现无法成交，正确结果是目标订单具有“未成交”状态，而不是让这只证券从信号日横截面消失。
+
+回删会产生两类问题。其一，研究样本隐含知道了下一交易日状态，形成前视选择；其二，因子分位数、排序阈值和目标权重可能被重新计算，使其他证券的信号也受到未来信息影响。即使被删证券本身没有收益标签，横截面统计仍然可能被系统性美化。
+
+\begin{principlebox}
+信号快照应当不可变。成交模拟可以新增 \texttt{execution\_status}、\texttt{unfilled\_reason} 和实际持仓记录，却不得覆盖信号日的 \texttt{in\_research\_universe}、\texttt{signal\_eligible} 或原始因子值。
+\end{principlebox}
+
+\section{纳入与剔除原因码}
+
+单一的 \texttt{eligible=True/False} 无法支持复核。每个阶段应同时记录结果、原因码、判断时点和规则版本。原因码最好采用稳定机器码，文字说明可以随文档更新；多条规则同时命中时，应保留完整原因集合或明确优先级，而不是只留下最后一次覆盖的结果。
+
+\cref{tab:ch03-reason-codes} 是教学用最小字典。它展示证据链的结构，不代表任何机构现有字段或最终枚举。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{纳入、剔除、成交与持仓原因码示例}
+  \label{tab:ch03-reason-codes}
+  \begin{tabularx}{\textwidth}{p{3.35cm} p{2.6cm} Y Y}
+    \toprule
+    教学原因码 & 判断阶段 & 含义 & 必须保留的证据 \\
+    \midrule
+    \texttt{BASE\_MEMBER} & 研究池 & 信号日属于历史基础池 & 成分生效区间与版本 \\
+    \texttt{EXCL\_NOT\_MEMBER} & 研究池 & 信号日不属于历史基础池 & 未匹配或区间不覆盖 \\
+    \texttt{SIGNAL\_ELIGIBLE} & 信号池 & 信号日前规则全部通过 & 逐项规则结果与版本 \\
+    \texttt{EXCL\_SIGNAL\_STATUS} & 信号池 & 信号日前某项资格未通过 & 状态值、可得日与规则 \\
+    \texttt{EXCL\_INPUT\_MISSING} & 信号池 & 计算信号所需输入缺失 & 缺失字段类别与检查时间 \\
+    \texttt{TARGET\_SELECTED} & 目标组合 & 经排序和约束进入目标 & 分数、目标权重与配置 \\
+    \texttt{ORDER\_UNFILLED} & 成交阶段 & 订单在成交代理时点未执行 & 订单、当时状态与失败原因 \\
+    \texttt{HOLD\_CARRY} & 持仓阶段 & 旧持仓因未完成卖出而延续 & 前期持仓、退出订单与状态 \\
+    \texttt{LABEL\_MISSING} & 标签阶段 & 约定窗口的价格代理不完整 & 缺失端点及原始可用性 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{周度信号日和下一交易日的生成}
+
+周度日程必须从历史交易日历生成，而不是用自然日加减。对每个研究周，先在日历中选择最后一个交易日作为 \(t\)，再从同一日历中查找严格晚于 \(t\) 的首个交易日，作为与本期信号对应的成交日。节假日会自然改变二者间的自然日距离，但不会改变“下一交易日”的定义。
+
+生成日程后，应把 \texttt{signal\_date}、\texttt{execution\_date}、日历版本和规则版本固化为调仓日程表。若研究期末没有下一交易日，最后一条信号可以保留，但其成交与标签状态必须明确标记为不可观察，不能凭自然日补齐。
+
+\begin{practicebox}
+正确顺序是：先从历史交易日历生成全部周度信号日，再映射各自下一交易日，最后把日程表连接到成员、信号、订单和标签。人工抽查至少覆盖跨周节假日、研究期起止和日历异常日期。
+\end{practicebox}
+
+\section{成交代理、持有期和未来收益标签}
+
+因子预测目标必须与可执行时序一致。信号使用 \(t\) 日收盘后可得信息时，不能同时假设无条件以 \(t\) 日收盘价成交。本章用 \(\tau(t)\) 表示下一交易日的可配置成交代理时点；下一次调仓信号记作 \(t+1\)，其成交代理时点记作 \(\tau(t+1)\)。这里的 \(t+1\) 表示\keyterm{下一次预定周度信号}，不是下一个自然日。
+
+令 \(P_i^{\mathrm{proxy}}(s)\) 为证券 \(i\) 在时点 \(s\) 按统一口径取得的成交价格代理，则本章的非重叠周度未来收益标签定义为
+
+\begin{equation}
+  y_{i,t}
+  = \frac{P_i^{\mathrm{proxy}}\!\left(\tau(t+1)\right)}
+  {P_i^{\mathrm{proxy}}\!\left(\tau(t)\right)} - 1 .
+  \label{eq:ch03-weekly-label}
+\end{equation}
+
+\cref{eq:ch03-weekly-label} 的两个端点必须采用一致且可解释的代理口径；任何复权、公司行动与费用处理都要另外写入配置和版本记录。标签描述的是模型要预测的未来区间，不自动等同于实际组合收益。实际组合收益还取决于订单是否成交、成交数量、旧持仓延续、现金和费用等状态。
+
+\begin{confirmbox}
+[需实际确认] \(P^{\mathrm{proxy}}\) 最终采用何种价格、端点如何处理复权与公司行动、订单可成交比例、费用及研究标签是否要求真实可成交，都必须按数据源和团队研究协议确认。本章不把任何具体价格字段或费用口径写成行业统一事实。
+\end{confirmbox}
+
+\section{非重叠周度标签的定义}
+
+按连续两次调仓的成交代理时点切分持有期，可将第 \(t\) 期标签窗口写成 \([\tau(t),\tau(t+1))\)。下一期从 \(\tau(t+1)\) 开始，因此相邻窗口共享边界但不重复计算同一持有区间。这种定义使周度信号、目标组合和未来标签在时间上对齐，也便于把每条标签追溯到两条日程记录。
+
+\cref{fig:ch03-label-timeline} 中，成员资格与信号值冻结在 \(t\) 收盘截止；成交状态到 \(\tau(t)\) 才读取；标签覆盖两次成交代理时点之间的区间。若证券在任一端点缺少约定代理，标签应进入显式缺失状态，而不是擅自延长或缩短持有期。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    x=1cm,
+    y=1cm,
+    every node/.style={font=\small},
+    event/.style={bluecard, text width=2.7cm, align=center},
+    exec/.style={orangecard, text width=2.8cm, align=center}
+  ]
+    \draw[line width=1.2pt, draw=SoftBlue] (0,0) -- (14.8,0);
+    \node[event] (s0) at (1.1,1.25) {信号日 \(t\) 收盘截止\\冻结成员与信号};
+    \node[exec] (e0) at (5.0,-1.25) {成交代理 \(\tau(t)\)\\读取当时交易状态};
+    \node[event] (s1) at (10.0,1.25) {下一信号日 \(t+1\)\\生成新目标};
+    \node[exec] (e1) at (13.7,-1.25) {成交代理 \(\tau(t+1)\)\\标签窗口结束};
+    \foreach \x in {1.1,5.0,10.0,13.7}
+      \draw[draw=SoftBlue, line width=1pt] (\x,-0.16) -- (\x,0.16);
+    \draw[myarrow, draw=SoftGreen] (5.0,0.35) -- node[above, align=center]
+      {持有期与标签窗口\\\([\tau(t),\tau(t+1))\)} (13.7,0.35);
+    \draw[softarrow] (s0.south) -- (1.1,0.16);
+    \draw[softarrow] (e0.north) -- (5.0,-0.16);
+    \draw[softarrow] (s1.south) -- (10.0,0.16);
+    \draw[softarrow] (e1.north) -- (13.7,-0.16);
+  \end{tikzpicture}
+  \caption{周度信号、成交代理与非重叠标签窗口}
+  \label{fig:ch03-label-timeline}
+\end{figure}
+
+\section{缺失标签、无法成交和退市样本的区别}
+
+\keyterm{标签缺失}表示无法按约定端点计算 \cref{eq:ch03-weekly-label}；\keyterm{无法成交}表示订单在成交阶段没有按规则执行；\keyterm{退市样本}表示证券实体经历了有时间边界的主数据事件。这三种状态可能同时出现，但语义不同，不能用同一个空值替代。
+
+证券有合法信号记录、却在 \(\tau(t)\) 无法买入时，信号横截面记录仍存在，订单日志记录未成交，实际持仓可能保持为零。若原本持有的证券无法卖出，则目标权重可以为零，但实际持仓必须延续并留痕。若标签端点价格缺失，应保留信号与缺失原因；不能把“没有标签”解释成“这只证券在历史上不存在”。
+
+退市、长期停牌和公司行动尤其需要保留状态链。它们可能影响代理价格、持仓估值、现金流和退出方式，但具体处理依赖数据源和研究口径。若无法可靠恢复，应把样本状态标为待确认或不可评估，并披露影响，而不是静默删除。
+
+\begin{confirmbox}
+[需实际确认] 退市证券的最后价格、现金或其他公司行动，长期停牌期间的估值，标签端点缺失后的处理，以及未成交订单的有效期，都需要结合历史制度、数据覆盖和团队状态机核验。任何默认填充值、延长窗口或强制退出规则都必须显式配置。
+\end{confirmbox}
+
+\section{一个极小教学案例}
+
+以下匿名案例只用于解释集合与留痕逻辑，不代表真实证券、真实数据库或实证研究结果。证券“样本 A”在信号日属于历史宽基成分，所有信号日前过滤均通过，并被目标组合选中；到下一交易日成交阶段，系统才观察到该证券无法按约定代理成交。
+
+\begin{casebox}
+正确记录方式是保留“样本 A”在 \(t\) 日的成员、因子值、排名和目标订单；在 \(\tau(t)\) 的订单日志新增 \texttt{ORDER\_UNFILLED} 及待核验原因；若此前未持有，则实际持仓仍为零，若此前已有持仓且退出订单也无法执行，则以 \texttt{HOLD\_CARRY} 记录延续。不得重新计算 \(t\) 日横截面，也不得删除该证券的信号行。
+\end{casebox}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{匿名证券“样本 A”的事件留痕}
+  \label{tab:ch03-anonymous-case}
+  \begin{tabularx}{\textwidth}{p{2.6cm} p{2.9cm} Y Y}
+    \toprule
+    阶段 & 记录状态 & 正确动作 & 禁止动作 \\
+    \midrule
+    信号日基础池 & \texttt{BASE\_MEMBER} & 保留历史成分证据 & 因后续未成交删除成员行 \\
+    信号日过滤 & \texttt{SIGNAL\_ELIGIBLE} & 冻结资格、因子值与排序 & 读取下一交易日状态重排 \\
+    目标组合 & \texttt{TARGET\_SELECTED} & 生成带版本的目标订单 & 把目标与实际持仓混为一列 \\
+    下一交易日 & \texttt{ORDER\_UNFILLED} & 记录状态、原因和未成交数量 & 回写 \texttt{signal\_eligible=False} \\
+    实际持仓 & 零持仓或 \texttt{HOLD\_CARRY} & 延续真实账本并记录差异 & 假定目标权重已经实现 \\
+    标签 & 有值或 \texttt{LABEL\_MISSING} & 按端点可用性独立判断 & 用零收益替代未知标签 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{pandas 风格最小代码或伪代码}
+
+下面的代码强调数据流，而不是给出可直接用于生产的字段规范。历史成员、信号过滤、目标订单、成交状态和标签被保存在不同表中；成交结果通过稳定主键和日程键回连，但不会覆盖信号快照。
+
+\begin{lstlisting}[
+  caption={股票池、成交状态和周度标签的最小数据流},
+  label={lst:ch03-universe-labels}
+]
+# schedule comes from a versioned historical trading calendar
+schedule = weekly_signals.merge(next_trading_dates, on="signal_date")
+
+# Membership and filters use only information available by signal_date.
+signal = historical_membership.merge(schedule, on="signal_date")
+signal["signal_eligible"] = (
+    signal["is_member_asof"]
+    & signal["listed_asof"]
+    & signal["signal_inputs_ready"]
+    & signal["signal_status_ok"]
+)
+signal_snapshot = signal.copy()  # immutable after signal cutoff
+
+# Execution state is joined only after targets have been generated.
+orders = targets.merge(
+    execution_state,
+    on=["security_id", "execution_date"],
+    how="left",
+)
+orders["filled"] = (
+    orders["execution_allowed"]
+    & orders["entry_proxy"].notna()
+)
+
+# Label endpoints use one consistent, configurable price proxy.
+labels = entry_proxy.merge(
+    next_entry_proxy,
+    on=["security_id", "signal_date"],
+    how="left",
+)
+labels["future_return"] = (
+    labels["next_proxy"] / labels["entry_proxy"] - 1
+)
+labels["label_missing"] = labels[
+    ["entry_proxy", "next_proxy"]
+].isna().any(axis=1)
+
+assert signal_snapshot.equals(signal)
+assert orders["execution_date"].gt(orders["signal_date"]).all()
+\end{lstlisting}
+
+\cref{lst:ch03-universe-labels} 中的 \texttt{execution\_allowed} 不是预设行业字段，而是成交状态机在 \(\tau(t)\) 根据经确认规则产生的结果。实际实现还应输出逐项原因码、配置版本和持仓账本，不能仅保留最终布尔值。
+
+\section{边界测试和人工核对}
+
+自动化测试应围绕集合是否在正确时点发生变化，而不仅是检查行数。建议至少覆盖以下边界：
+
+\begin{enumerate}
+  \item \textbf{节假日：}周末或节假日后的成交日必须来自下一历史交易日，不得用 \(t+1\) 个自然日代替；
+  \item \textbf{成分进出：}生效日前不纳入，生效日及以后按历史记录判断；后来调出不得改写此前成员资格；
+  \item \textbf{上市与代码变更：}上市前不得进入，代码变化前后通过稳定标识连续，且不同实体不得因代码复用误拼；
+  \item \textbf{退市：}退市前的信号行保持存在，退市后的标签与持仓状态按原因码进入待确认流程；
+  \item \textbf{停牌：}信号日通过、下一交易日才无法成交的证券仍留在信号快照，订单标记未成交；
+  \item \textbf{价格限制或代理缺失：}只改变成交或标签状态，不改变历史成员、信号资格和原始排名；
+  \item \textbf{标签缺失：}任一端点缺失时不默认填零，并能指出缺失端点、证券和对应窗口；
+  \item \textbf{持仓延续：}目标退出但卖单未成交时，目标组合与实际持仓的差异必须可追溯。
+\end{enumerate}
+
+\begin{practicebox}
+人工核对应抽取若干信号日和匿名证券，沿“历史成分记录 \(\rightarrow\) 信号过滤证据 \(\rightarrow\) 目标订单 \(\rightarrow\) 成交状态 \(\rightarrow\) 实际持仓 \(\rightarrow\) 标签端点”逐步穿行。至少选取一次跨节假日、一次成分变更、一次上市或退市、一次成交受阻和一次标签缺失，并由核验人记录预期状态、实际状态、差异原因与证据位置。
+\end{practicebox}
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：用当前指数成分或当前存续证券回填历史；把研究池、目标组合和实际持仓压成同一个集合；用 \(\tau(t)\) 的停牌或价格限制回删 \(t\) 日样本；以自然日生成下一交易日；把目标权重当作已成交持仓；把缺失标签填成零收益；在标签两端混用不同价格口径；静默删除退市或长期停牌证券；以及只保存最终布尔值而不保存原因码和规则版本。
+\end{warningbox}
+
+发现这些问题时，不应只修正最终收益序列。应从最早受污染的集合快照开始重建，并比较修复前后的成员数、原因码分布、目标订单、成交状态和标签覆盖，确认未来状态不再影响过去横截面。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章结束后应提交：版本化的周度信号与成交日程表；逐信号日历史研究池和信号有效池；纳入与剔除原因码字典；目标订单、成交结果与实际持仓的关联键设计；\cref{eq:ch03-weekly-label} 对应的标签定义和端点状态；自动化边界测试结果；以及包含节假日、成分变化、上市或退市、停牌和标签缺失的人工穿行记录。
+\end{outputbox}
+
+这些产出描述的是可复核的数据接口，不包含任何策略收益、因子有效性或实证结论。在没有真实金融数据和经确认口径之前，不应生成结果数字。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 为什么下一交易日无法买入，不能成为删除信号日证券的理由？
+  \item \(\mathcal{U}^{\mathrm{signal}}_t\)、\(\mathcal{C}_t\) 与 \(\mathcal{H}_{\tau(t)}\) 分别回答什么问题？
+  \item 某证券目标权重为零但仍在实际持仓中，可能发生了什么？应保留哪些记录？
+  \item 为什么“标签缺失”和“证券在历史中不存在”不能使用同一个状态？
+  \item 如何用历史交易日历构造 \(t\)、\(\tau(t)\) 与 \(\tau(t+1)\)？
+  \item \cref{eq:ch03-weekly-label} 的两个价格端点需要满足哪些一致性要求？
+  \item 若只能获得当前指数成分，是否可以重建历史基础池？应如何披露限制？
+  \item 请为“信号日有效、成交日未成交、旧持仓延续”设计一条完整证据链。
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 4 章《因子构造与实现核对》的衔接}
+
+本章把每个信号日可参与横截面比较的证券集合冻结下来，并为后续结果定义了统一预测窗口。第 4 章将在 \(\mathcal{U}^{\mathrm{signal}}_t\) 上实现中期动量、账面市值比价值和 ROE 类质量三个教学因子，重点核对输入窗口、方向、缺失值与单证券计算路径。
+
+衔接时必须继续保持两条边界：因子只能读取信号截止前可得数据，因子构造不能读取 \cref{eq:ch03-weekly-label} 的未来端点；成交日状态也不得反向参与因子缺失处理或横截面排序。这样，第 4 章得到的因子表才能与本章的成员快照和标签表通过稳定主键安全连接。
