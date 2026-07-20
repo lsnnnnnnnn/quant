@@ -208,31 +208,31 @@
   \centering
   \begin{tikzpicture}[
     node distance=7mm and 7mm,
-    step/.style={card,align=center,text width=3.25cm,minimum height=1.05cm},
-    note/.style={align=center,text width=3.3cm,font={\footnotesize\color{BaseGray}}}
+    quantTimelineStep/.style={quantCard,align=center,text width=3.25cm,minimum height=1.05cm},
+    quantTimelineNote/.style={align=center,text width=3.3cm,font={\footnotesize\color{BaseGray}}}
   ]
-    \node[bluecard,align=center,text width=3.25cm,minimum height=1.05cm] (cutoff)
+    \node[quantBlueCard,align=center,text width=3.25cm,minimum height=1.05cm] (cutoff)
       {信号日 $t$ 收盘截止\\冻结当时可得信息};
-    \node[step,right=of cutoff] (factor)
+    \node[quantTimelineStep,right=of cutoff] (factor)
       {因子计算\\动量、价值、质量};
-    \node[step,right=of factor] (target)
+    \node[quantTimelineStep,right=of factor] (target)
       {综合分、目标权重\\与订单意图};
-    \node[orangecard,align=center,text width=3.25cm,minimum height=1.05cm,below=of target] (trade)
+    \node[quantOrangeCard,align=center,text width=3.25cm,minimum height=1.05cm,below=of target] (trade)
       {下一交易日成交模拟\\处理当日交易状态};
-    \node[step,left=of trade] (hold)
+    \node[quantTimelineStep,left=of trade] (hold)
       {持有期\\记录实际模拟持仓};
-    \node[step,left=of hold] (next)
+    \node[quantTimelineStep,left=of hold] (next)
       {下一次调仓成交\\结束本期标签窗口};
 
-    \draw[myarrow] (cutoff) -- (factor);
-    \draw[myarrow] (factor) -- (target);
-    \draw[myarrow] (target) -- (trade);
-    \draw[myarrow] (trade) -- (hold);
-    \draw[myarrow] (hold) -- (next);
+    \draw[quantArrow] (cutoff) -- (factor);
+    \draw[quantArrow] (factor) -- (target);
+    \draw[quantArrow] (target) -- (trade);
+    \draw[quantArrow] (trade) -- (hold);
+    \draw[quantArrow] (hold) -- (next);
 
-    \node[note,above=4mm of cutoff]
+    \node[quantTimelineNote,above=4mm of cutoff]
       {已知：$t$ 及以前行情、历史成分、已可得财务};
-    \node[note,below=4mm of trade]
+    \node[quantTimelineNote,below=4mm of trade]
       {此时才知道成交阶段状态；收益标签从约定成交代理起算};
   \end{tikzpicture}
   \caption{周频约束多头案例的事件时序（结构示意，非实证结果）}

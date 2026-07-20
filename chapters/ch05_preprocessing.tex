@@ -48,21 +48,21 @@
   \begin{tikzpicture}[
     node distance=2mm,
     every node/.style={font=\small},
-    step/.style={bluecard, text width=1.9cm, minimum height=1.35cm, align=center},
-    optional/.style={orangecard, text width=2.0cm, minimum height=1.35cm, align=center}
+    quantPreprocessStep/.style={quantBlueCard, text width=1.9cm, minimum height=1.35cm, align=center},
+    quantPreprocessOptional/.style={quantOrangeCard, text width=2.0cm, minimum height=1.35cm, align=center}
   ]
-    \node[step] (raw) {原始值\\与有效状态};
-    \node[step, right=of raw] (missing) {缺失机制\\覆盖率诊断};
-    \node[step, right=of missing] (clip) {当日截面\\极端值处理};
-    \node[step, right=of clip] (scale) {方向统一\\排名或标准化};
-    \node[step, right=of scale] (exposure) {行业与市值\\暴露诊断};
-    \node[optional, right=of exposure] (neutral) {可选行业内处理\\或残差化};
+    \node[quantPreprocessStep] (raw) {原始值\\与有效状态};
+    \node[quantPreprocessStep, right=of raw] (missing) {缺失机制\\覆盖率诊断};
+    \node[quantPreprocessStep, right=of missing] (clip) {当日截面\\极端值处理};
+    \node[quantPreprocessStep, right=of clip] (scale) {方向统一\\排名或标准化};
+    \node[quantPreprocessStep, right=of scale] (exposure) {行业与市值\\暴露诊断};
+    \node[quantPreprocessOptional, right=of exposure] (neutral) {可选行业内处理\\或残差化};
 
-    \draw[myarrow] (raw) -- (missing);
-    \draw[myarrow] (missing) -- (clip);
-    \draw[myarrow] (clip) -- (scale);
-    \draw[myarrow] (scale) -- (exposure);
-    \draw[myarrow] (exposure) -- (neutral);
+    \draw[quantArrow] (raw) -- (missing);
+    \draw[quantArrow] (missing) -- (clip);
+    \draw[quantArrow] (clip) -- (scale);
+    \draw[quantArrow] (scale) -- (exposure);
+    \draw[quantArrow] (exposure) -- (neutral);
   \end{tikzpicture}
   \caption{原始因子到可选暴露处理的流程（结构示意，非实证结果）}
   \label{fig:ch05-preprocess-pipeline}

@@ -33,19 +33,19 @@
   \begin{tikzpicture}[
     node distance=3mm,
     every node/.style={font=\small},
-    step/.style={bluecard, text width=2.25cm, minimum height=1.35cm, align=center},
-    check/.style={greencard, text width=2.35cm, minimum height=1.35cm, align=center}
+    quantFactorStep/.style={quantBlueCard, text width=2.25cm, minimum height=1.35cm, align=center},
+    quantFactorCheck/.style={quantGreenCard, text width=2.35cm, minimum height=1.35cm, align=center}
   ]
-    \node[step] (hypothesis) {经济假设\\与预期方向};
-    \node[step, right=of hypothesis] (data) {点时数据\\参数与窗口};
-    \node[step, right=of data] (raw) {原始因子值\\\texttt{raw\_value}};
-    \node[check, right=of raw] (valid) {有效性检查\\原因与版本};
-    \node[step, right=of valid] (next) {第 5 章\\后续预处理};
+    \node[quantFactorStep] (hypothesis) {经济假设\\与预期方向};
+    \node[quantFactorStep, right=of hypothesis] (data) {点时数据\\参数与窗口};
+    \node[quantFactorStep, right=of data] (raw) {原始因子值\\\texttt{raw\_value}};
+    \node[quantFactorCheck, right=of raw] (valid) {有效性检查\\原因与版本};
+    \node[quantFactorStep, right=of valid] (next) {第 5 章\\后续预处理};
 
-    \draw[myarrow] (hypothesis) -- (data);
-    \draw[myarrow] (data) -- (raw);
-    \draw[myarrow] (raw) -- (valid);
-    \draw[myarrow] (valid) -- (next);
+    \draw[quantArrow] (hypothesis) -- (data);
+    \draw[quantArrow] (data) -- (raw);
+    \draw[quantArrow] (raw) -- (valid);
+    \draw[quantArrow] (valid) -- (next);
   \end{tikzpicture}
   \caption{从研究假设到原始因子输出的流程（结构示意，非实证结果）}
   \label{fig:ch04-factor-pipeline}
