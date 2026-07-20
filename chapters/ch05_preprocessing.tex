@@ -1,5 +1,575 @@
 \chapter{因子预处理与基础暴露控制}
+\label{ch:preprocessing}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:factor-construction} 已经为中期动量、账面市值比价值和 ROE 类质量生成统一的原始因子长表。本章以该长表为唯一因子输入，只处理冻结信号日股票池中
+\texttt{is\_valid=True} 的 \texttt{raw\_value}，并且只连接信号日已经可得的历史行业、市值及相关元数据。目标是让不同量纲、不同分布的原始值变成可比较且可追溯的处理后因子，而不是借助处理步骤寻找更漂亮的结果。
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 区分缺失、无效、极端但有效和普通有效四类状态；
+  \item 在逐信号日、逐因子的横截面内计算覆盖率与分布统计；
+  \item 使用配置化 MAD 缩尾、方向统一、排名或标准化；
+  \item 测量因子的行业与市值暴露，并解释暴露不等于错误；
+  \item 比较行业内处理与截面回归残差化的含义和限制；
+  \item 保留原始值、步骤参数、处理状态与点时元数据；
+  \item 用自动测试和匿名横截面手算证明没有跨日期或访问未来信息。
+\end{enumerate}
+
+\begin{principlebox}
+[通用原则] 所有截面统计都只能来自同一
+\texttt{signal\_date}、同一 \texttt{factor\_name} 的当期有效信号池。不得用全样本或未来日期的均值、标准差、分位数、行业映射或市值处理早期因子。
+\end{principlebox}
+
+本章不读取 \texttt{future\_return}、成交结果或组合表现，也不计算 IC、RankIC、分组收益或因子有效性结论。参数择优、多因子合成、组合与回测均留到后续章节。
+
+\section{为什么预处理不是“数据美容”}
+
+预处理的职责是让数值含义明确、尺度可比并暴露数据问题。它不能把不利观察隐藏掉，也不能把某种分布形状当作必须修正的缺陷。极端值可能来自录入错误，也可能是经济上真实但罕见的状态；行业差异可能是非目标暴露，也可能正是因子假设的一部分。只有先理解原因，才有资格选择处理方法。
+
+因此，预处理方案应在查看后续收益前冻结。每一步都要能回答：使用了哪些当期样本，参数是多少，哪些记录被改变，哪些记录没有处理，以及处理后保留或删除了什么经济含义。若方法选择依据是最终回测表现，预处理就变成了隐蔽的参数搜索。
+
+\begin{teachingbox}
+[教学简化] 本章采用透明基线：
+\texttt{raw\_value}
+\(\rightarrow\) 有效样本筛选
+\(\rightarrow\) 当日 MAD 缩尾
+\(\rightarrow\) 固定方向统一
+\(\rightarrow\) 当日标准化
+\(\rightarrow\) 暴露诊断
+\(\rightarrow\) 可选行业或市值处理
+\(\rightarrow\) \texttt{processed\_value}。每一步均可由配置替换，但不得按后续表现挑选。
+\end{teachingbox}
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=2mm,
+    every node/.style={font=\small},
+    step/.style={bluecard, text width=1.9cm, minimum height=1.35cm, align=center},
+    optional/.style={orangecard, text width=2.0cm, minimum height=1.35cm, align=center}
+  ]
+    \node[step] (raw) {原始值\\与有效状态};
+    \node[step, right=of raw] (missing) {缺失机制\\覆盖率诊断};
+    \node[step, right=of missing] (clip) {当日截面\\极端值处理};
+    \node[step, right=of clip] (scale) {方向统一\\排名或标准化};
+    \node[step, right=of scale] (exposure) {行业与市值\\暴露诊断};
+    \node[optional, right=of exposure] (neutral) {可选行业内处理\\或残差化};
+
+    \draw[myarrow] (raw) -- (missing);
+    \draw[myarrow] (missing) -- (clip);
+    \draw[myarrow] (clip) -- (scale);
+    \draw[myarrow] (scale) -- (exposure);
+    \draw[myarrow] (exposure) -- (neutral);
+  \end{tikzpicture}
+  \caption{原始因子到可选暴露处理的流程（结构示意，非实证结果）}
+  \label{fig:ch05-preprocess-pipeline}
+\end{figure}
+
+\section{原始值、有效状态、缺失和异常的区别}
+
+第 4 章的 \texttt{is\_valid} 表示原始因子是否满足定义卡；\texttt{raw\_value} 是公式输出；缺失描述某个输入或结果没有可用数值；异常则是相对于当期截面分布或业务规则值得复核的观察。它们属于不同层次。一个原始值可以有效且极端，也可以因为分母不合法而无效并保持缺失。
+
+\cref{tab:ch05-value-states} 给出四种状态。任何处理都必须保留信号记录本身，不能因为某因子缺失就把证券从历史股票池中删除。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{缺失、无效、极端有效值和普通有效值的状态对比}
+  \label{tab:ch05-value-states}
+  \begin{tabularx}{\textwidth}{p{2.35cm} p{2.1cm} p{2.1cm} Y Y}
+    \toprule
+    状态 & \texttt{raw\_value} & \texttt{is\_valid} & 是否进入截面统计 & 正确留痕 \\
+    \midrule
+    输入缺失 & 通常缺失 & 否 & 否 & 保留记录、缺失来源和无效原因 \\
+    定义无效 & 缺失 & 否 & 否 & 保留第 4 章原因码，不在本章改判 \\
+    极端但有效 & 有限数值 & 是 & 是 & 标记缩尾边界与处理前后数值 \\
+    普通有效 & 有限数值 & 是 & 是 & 保留原值并按冻结流程处理 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{缺失机制与覆盖率}
+
+覆盖率的分母应是信号日冻结股票池，而不是“已经有值的记录数”。令
+\(\mathcal{U}^{\mathrm{signal}}_t\) 为信号日股票池，令
+\(\mathcal{V}_{f,t}\) 为因子 \(f\) 在 \(t\) 日满足有效条件且原始值有限的证券集合，则
+
+\begin{equation}
+  \mathrm{Coverage}_{f,t}
+  =
+  \frac{
+    \left|\mathcal{V}_{f,t}\right|
+  }{
+    \left|\mathcal{U}^{\mathrm{signal}}_t\right|
+  } .
+  \label{eq:ch05-coverage}
+\end{equation}
+
+覆盖率至少要按因子和信号日报告，并进一步按历史行业与预先冻结的市值层检查。若某因子整体覆盖尚可，却长期缺失于某个行业或规模层，后续横截面可能代表的是一个被选择过的子样本。诊断还应拆分 \texttt{invalid\_reason}，避免把历史不足、财务尚不可得和非法分母混成同一种缺失。
+
+贯穿案例的多因子阶段默认使用三个因子均有效的交集，因此还要报告交集覆盖率以及从单因子到交集的损失。行业中位数填补或缺失指示变量可以作为预注册敏感性方案，但不是本章默认基线，更不能因为某种填补后的表现较好才采用。
+
+\section{为什么不能无条件填零}
+
+零可能是合法的经济数值：方向统一后的动量为零、标准化值接近零，都有明确含义。把未知或无效填成零，会让“没有信息”伪装成“处于截面中间”，还会改变均值、标准差、排名、行业暴露和后续交集覆盖率。填零之后，原始缺失机制也很难恢复。
+
+\begin{warningbox}
+无效值保持缺失，信号记录保持存在。不得使用
+\texttt{fillna(0)} 让记录进入缩尾、标准化或回归。若研究确需填补，必须把填补方法、适用分组、样本下限和缺失指示字段写入独立敏感性配置，并保留未填补基线。
+\end{warningbox}
+
+\section{截面处理必须逐信号日执行}
+
+对每个因子 \(f\) 和信号日 \(t\)，先从冻结股票池取出当期记录，再选取
+\texttt{is\_valid=True} 且 \texttt{raw\_value} 有限的集合
+\(\mathcal{V}_{f,t}\)。中位数、MAD、分位数、均值、标准差、行业统计和回归设计矩阵都只能从这个集合构造。处理函数的基本分组键因此是
+\texttt{["signal\_date", "factor\_name"]}。
+
+跨日期共享统计量会把未来分布带到过去。即使全样本均值只由原始因子构成、没有显式收益标签，它仍包含未来日期信息，并会让不同时期的尺度相互污染。正确实现应为每个分组保存独立的样本数、边界、均值、标准差和处理状态。
+
+\begin{practicebox}
+最小防错断言包括：每个处理分组只含一个信号日和一个因子；统计样本均有效；处理前后记录总数一致；原始值逐元素不变；输入行业与市值的可得日不晚于信号日；输出按稳定主键确定性排序。
+\end{practicebox}
+
+\section{极端值识别与缩尾}
+
+缩尾（winsorization）把超过边界的有效值压到边界，而不是删除记录。对某一
+\((f,t)\) 截面，记有效原始值为 \(x_{i,t}\)，其中位数与绝对中位差（median absolute deviation, MAD）定义为
+
+\begin{align}
+  m_t
+  &=
+  \operatorname{median}_{i\in\mathcal{V}_{f,t}}
+  \left(x_{i,t}\right),
+  \label{eq:ch05-median}\\
+  \mathrm{MAD}_t
+  &=
+  \operatorname{median}_{i\in\mathcal{V}_{f,t}}
+  \left|x_{i,t}-m_t\right|.
+  \label{eq:ch05-mad}
+\end{align}
+
+设 \(k\) 为边界倍数、\(c\) 为尺度常数，则教学边界写为
+
+\begin{equation}
+  \ell_t=m_t-kc\,\mathrm{MAD}_t,
+  \qquad
+  u_t=m_t+kc\,\mathrm{MAD}_t,
+  \label{eq:ch05-mad-bounds}
+\end{equation}
+
+并令
+\(x^{\mathrm{clip}}_{i,t}=\min\{\max(x_{i,t},\ell_t),u_t\}\)。
+\(k\)、\(c\)、最小样本数和备用规则都属于配置，而非行业常数。当 MAD 为零、有效样本过少或截面退化时，应输出
+\texttt{MAD\_DEGENERATE} 或
+\texttt{INSUFFICIENT\_CROSS\_SECTION}，再按冻结配置选择“不缩尾”或其他降级规则。
+
+分位数缩尾是可解释的替代方案，但它同样必须逐日计算，并预先固定上下分位点、插值方式和小样本规则。不能通过最终因子表现选择 MAD 或分位数方案。
+
+\section{排名、标准化和方向统一}
+
+方向统一来自第 4 章定义卡。令 \(d_f\in\{-1,+1\}\) 为冻结的
+\texttt{direction\_sign}，先得到
+\(x^{\mathrm{dir}}_{i,t}=d_f x^{\mathrm{clip}}_{i,t}\)。这个符号不能根据后续收益翻转。
+
+逐信号日 z-score 定义为
+
+\begin{equation}
+  z_{i,t}
+  =
+  \frac{
+    x^{\mathrm{dir}}_{i,t}-\mu_t
+  }{
+    \sigma_t
+  },
+  \label{eq:ch05-zscore}
+\end{equation}
+
+其中 \(\mu_t\) 与 \(\sigma_t\) 只由当日有效截面计算。若
+\(\sigma_t\) 为零或低于配置阈值，程序必须停止标准化或进入明确降级状态，不能强行除法。
+
+排名只保留相对次序，对尾部距离不敏感；z-score 保留相对距离，但更依赖分布和尺度。一种双边归一化排名可写为
+
+\begin{equation}
+  r_{i,t}
+  =
+  2\frac{\operatorname{rank}_{i,t}-1}{n_t-1}-1,
+  \qquad n_t>1.
+  \label{eq:ch05-rank}
+\end{equation}
+
+并列值规则、\(n_t\) 下限、排名区间和标准差自由度都要由配置固定。\cref{tab:ch05-method-comparison} 比较四种常用操作。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{MAD 缩尾、分位数缩尾、排名与 z-score 对比}
+  \label{tab:ch05-method-comparison}
+  \begin{tabularx}{\textwidth}{p{2.5cm} Y Y Y}
+    \toprule
+    方法 & 保留的信息 & 主要配置 & 失败或降级状态 \\
+    \midrule
+    MAD 缩尾 & 中部尺度及边界内距离 & \(k\)、\(c\)、最小样本数 & MAD 为零、样本不足、分布退化 \\
+    分位数缩尾 & 截面次序与边界内距离 & 上下分位点、插值方式 & 小样本、分位点重合 \\
+    截面排名 & 相对次序 & 并列规则、归一化区间 & 样本过少、大量并列 \\
+    z-score & 相对均值的标准差距离 & 标准差定义、最小尺度 & 标准差为零或过小 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{行业与市值暴露}
+
+因子与行业或规模相关并不自动意味着实现错误。暴露诊断首先描述“处理前后与什么共同变化”，然后才讨论是否需要控制。市值诊断可在每个信号日计算因子与
+\(\log(\mathrm{MarketCap}_{i,t})\) 的截面相关，或在截面回归中记录对应系数；行业诊断则比较各历史行业的因子均值、中位数和覆盖率。
+
+行业标签和市值必须在 \(t\) 时点已经生效或可得。用今天的行业分类回填历史，或用信号日之后市值修复缺失，都会重新引入第 2 章已经禁止的未来信息。市值非正、单位异常、行业缺失或生效区间不覆盖 \(t\) 时，应保留明确状态。
+
+\begin{confirmbox}
+[需实际确认] 行业分类体系及层级、市值采用何种口径、对数变换前的合法性规则、市值层划分、行业变更生效时间和历史版本保存方式均依赖数据源与团队规范。本章只规定点时边界，不虚构字段映射。
+\end{confirmbox}
+
+\section{行业内处理}
+
+行业内处理先按同一信号日的历史行业分组，再在每个行业内部执行排名、去均值或标准化。它可以减少行业均值差异，并让证券更多地与同业比较。若采用行业内去均值，可写为
+
+\begin{equation}
+  z^{\mathrm{within}}_{i,t}
+  =
+  z_{i,t}
+  -
+  \overline{z}_{g(i,t),t},
+  \label{eq:ch05-within-industry}
+\end{equation}
+
+其中 \(g(i,t)\) 是证券 \(i\) 在 \(t\) 时点的历史行业，
+\(\overline{z}_{g,t}\) 是当日该行业有效证券均值。
+
+行业内处理并不控制行业内部的市值梯度，也可能让样本很小的行业产生不稳定分数。缺失行业、小行业和行业内标准差过小必须触发冻结降级规则，例如保留全市场标准化值、只去行业均值或标记不可处理；具体选择不能临时决定。
+
+\section{截面回归残差化}
+
+截面回归残差化把方向统一后的标准化因子作为被解释变量，用当期点时市值和行业哑变量解释其横截面差异。对每个信号日独立估计
+
+\begin{equation}
+  z_{i,t}
+  =
+  \alpha_t
+  +
+  \beta_t\log\!\left(\mathrm{MarketCap}_{i,t}\right)
+  +
+  \sum_{g=1}^{G-1}
+  \gamma_{g,t}\,
+  \mathrm{Industry}_{i,g,t}
+  +
+  \varepsilon_{i,t},
+  \label{eq:ch05-residualization}
+\end{equation}
+
+并可将残差 \(\varepsilon_{i,t}\) 作为一种
+\texttt{processed\_value}。省略一个行业作为基准只是避免完全共线的一种实现方式；截距、哑变量编码和缺失行业规则都必须固定。
+
+回归仍以同一 \((f,t)\) 截面为单位。样本数必须明显大于有效参数数；设计矩阵共线、秩不足、小行业或市值缺失时，应明确失败或降级。是否使用加权回归、权重如何定义、残差是否再标准化，均属于研究口径而不是默认事实。
+
+\begin{confirmbox}
+[需实际确认] 等权或加权回归、行业哑变量编码、缺失行业类别、最小样本数、秩判断容差、异常市值处理和残差再标准化规则，都应在配置中冻结并由人工核验。
+\end{confirmbox}
+
+\section{中性化可能删除什么信息}
+
+中性化不是机械必选步骤。账面市值比的分母直接含市值，行业资产结构也可能是价值假设的一部分；ROE 的行业差异可能反映商业模式；动量可能与规模、波动或流动性共同变化。残差化会删除能够被所选暴露解释的线性部分，其中既可能有非目标风险，也可能有原假设希望保留的信息。
+
+因此，处理前后必须比较覆盖率、分布、方向一致性、原版本与处理版本的截面相关、行业均值差异以及与对数市值的关系。暴露下降只说明数学关联被削弱，不代表因子“更好”，更不能替代第 6 章的有效性与可交易性检验。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{行业内处理与截面回归残差化对比}
+  \label{tab:ch05-exposure-methods}
+  \begin{tabularx}{\textwidth}{p{2.7cm} Y Y Y}
+    \toprule
+    比较项 & 行业内处理 & 回归残差化 & 共同要求 \\
+    \midrule
+    主要目标 & 减少行业组间位置差异 & 同时控制行业和对数市值线性关系 & 每个信号日独立执行 \\
+    输出含义 & 相对当期同业的位置 & 暴露模型未解释的剩余部分 & 不能自动称为更优因子 \\
+    优点 & 直观、容易人工核对 & 可同时纳入多个暴露 & 保留原始与处理版本 \\
+    风险 & 小行业不稳定，仍留规模暴露 & 共线、秩不足、模型设定依赖 & 可能删除经济信息 \\
+    点时输入 & 历史行业 & 历史行业与点时市值 & 生效或可得时间不晚于 \(t\) \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{三个教学因子的处理选择}
+
+三个因子共享“有效筛选—当日缩尾—方向统一—当日标准化”的主基线，但暴露处理不必相同：
+
+\begin{itemize}
+  \item \textbf{中期动量：}检查价格跳跃和极端原始值，保留原始动量，再做逐日缩尾与标准化；同时诊断行业、市值、波动和流动性暴露。是否中性化取决于研究问题。
+  \item \textbf{账面市值比：}只处理第 4 章已判定有效的正值。对数变换可作为配置化替代方案，但不是必选步骤。行业资产结构差异与分母中的市值都要求重点检查；原始、行业内和行业加市值残差版本应并列保留。
+  \item \textbf{ROE 类质量：}检查小分母导致的长尾，但不回头修改第 4 章有效性定义。比较原始、缩尾和标准化版本，并诊断行业、杠杆与规模相关性；不了解经济含义时不得机械去除全部暴露。
+\end{itemize}
+
+统一处理后输出沿用第 4 章主键，并新增步骤字段。\cref{tab:ch05-output-schema} 给出教学 schema。
+
+{
+\setlength{\tabcolsep}{3pt}
+\small
+\begin{longtable}{p{3.4cm} p{2.25cm} p{5.05cm} p{4.1cm}}
+\caption{统一处理后因子输出 schema}\label{tab:ch05-output-schema}\\
+\toprule
+字段 & 教学类型 & 含义 & 最小约束 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 教学类型 & 含义 & 最小约束 \\
+\midrule
+\endhead
+\texttt{security\_id} & 标识 & 稳定证券主键 & 与原始因子记录一致 \\
+\texttt{signal\_date} & 日期 & 当期信号日 & 属于冻结调仓日程 \\
+\texttt{factor\_name} & 字符串 & 因子定义卡名称 & 不因处理方法改名 \\
+\texttt{raw\_value} & 数值或缺失 & 第 4 章原始值 & 永久保留、不得覆盖 \\
+\texttt{is\_valid} & 布尔 & 第 4 章有效状态 & 本章不得回头改判 \\
+\texttt{invalid\_reason} & 枚举或列表 & 原始值无效原因 & 无效记录仍保留 \\
+\texttt{clipped\_value} & 数值或缺失 & 当日极端值处理结果 & 记录边界与退化状态 \\
+\texttt{direction\_sign} & \(-1\) 或 \(+1\) & 冻结定义卡方向 & 不读取未来表现 \\
+\texttt{standardized\_value} & 数值或缺失 & 当日排名或标准化值 & 方法由配置解释 \\
+\texttt{processed\_value} & 数值或缺失 & 交付后续章节的版本 & 含义由配置明确 \\
+\texttt{preprocess\_method} & 字符串 & 缩尾、尺度与方向步骤 & 参数可追溯 \\
+\texttt{preprocess\_version} & 字符串 & 预处理流程版本 & 版本变更不覆盖历史 \\
+\texttt{industry\_asof} & 类别或缺失 & 信号日历史行业 & 生效区间覆盖信号日 \\
+\texttt{log\_market\_cap\_asof} & 数值或缺失 & 点时对数市值 & 可得日不晚于信号日 \\
+\texttt{exposure\_method} & 字符串 & 无、行业内或残差化 & 与输出含义一致 \\
+\texttt{processing\_status} & 枚举或列表 & 成功、退化或失败状态 & 不得静默降级 \\
+\bottomrule
+\end{longtable}
+}
+
+同一证券、信号日、因子名称和预处理版本必须唯一。处理前后总记录数、有效记录数、缺失原因与覆盖率都应能由该表及配套分组参数表重建。
+
+\section{一个匿名横截面教学案例}
+
+以下数字均为教学虚构数据，只用于解释预处理计算，不代表真实证券、真实数据库或实证研究结果。设单一信号日为 \(t^\star\)，因子方向
+\(d_f=+1\)，匿名行业为甲、乙；对数市值仅是教学尺度。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{单信号日八只匿名证券的缩尾与标准化示例}
+  \label{tab:ch05-toy-cross-section}
+  \begin{tabularx}{\textwidth}{p{1.25cm} p{1.25cm} p{1.55cm} p{1.8cm} p{2.4cm} p{1.75cm} Y}
+    \toprule
+    证券 & 行业 & 原始值 & 对数市值 & 原始状态 & 缩尾值 & z-score \\
+    \midrule
+    样本 A & 甲 & \(-1.0\) & \(2.0\) & 有效 & \(-1.0\) & \(-1.41\) \\
+    样本 B & 甲 & \(-0.5\) & \(2.3\) & 有效 & \(-0.5\) & \(-0.96\) \\
+    样本 C & 甲 & \(0.0\) & \(2.6\) & 有效 & \(0.0\) & \(-0.51\) \\
+    样本 D & 甲 & \(0.5\) & \(2.9\) & 有效 & \(0.5\) & \(-0.06\) \\
+    样本 E & 乙 & \(1.0\) & \(2.1\) & 有效 & \(1.0\) & \(0.38\) \\
+    样本 F & 乙 & \(1.5\) & \(2.4\) & 有效 & \(1.5\) & \(0.83\) \\
+    样本 G & 乙 & \(8.0\) & \(4.5\) & 极端但有效；大市值 & \(2.5\) & \(1.73\) \\
+    样本 H & 乙 & 缺失 & \(2.5\) & 无效；保留记录 & 缺失 & 缺失 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{casebox}
+七个有效原始值的中位数为 \(m_{t^\star}=0.5\)，MAD 为
+\(1.0\)。为便于手算，本例临时设 \(kc=2\)，得到教学边界
+\([-1.5,\,2.5]\)，因此仅样本 G 从 \(8.0\) 压到 \(2.5\)；样本 H 不参与任何统计，也不填零。
+
+七个缩尾值的均值约为 \(0.57\)，本例采用总体标准差，约为
+\(1.12\)。样本 G 的 z-score 因而约为
+\((2.5-0.57)/1.12=1.73\)。表中其余数值按相同公式计算，舍入仅用于教学展示。
+\end{casebox}
+
+行业甲的标准化均值约为 \(-0.74\)，行业乙的有效样本均值约为
+\(0.98\)，说明这一虚构截面带有明显行业位置差异。行业内去均值会分别减去两组均值；例如样本 G 约变为
+\(1.73-0.98=0.75\)。这一步仍未控制其较大的对数市值；若选择残差化，还需把行业哑变量与对数市值共同放入当日设计矩阵。该案例只展示计算，不评价哪种版本更有效。
+
+\section{pandas 风格最小实现}
+
+\cref{lst:ch05-preprocess} 展示逐信号日、逐因子的基线框架。代码使用概念字段，残差化由独立小函数表示，不引入复杂优化库。
+
+\begin{lstlisting}[
+  caption={逐信号日截面预处理的最小实现},
+  label={lst:ch05-preprocess}
+]
+FORBIDDEN = {
+    "future_return", "execution_status",
+    "portfolio_weight", "backtest_result",
+}
+GROUP = ["signal_date", "factor_name"]
+ORDER = GROUP + ["security_id"]
+
+def preprocess_cross_section(frame, config):
+    assert FORBIDDEN.isdisjoint(frame.columns)
+    assert frame["direction_frozen"].all()
+    market_known = frame["market_cap_available_date"].notna()
+    assert (
+        frame.loc[market_known, "market_cap_available_date"]
+        <= frame.loc[market_known, "signal_date"]
+    ).all()
+    industry_known = frame["industry_asof"].notna()
+    assert (
+        frame.loc[industry_known, "industry_start"].le(
+            frame.loc[industry_known, "signal_date"]
+        )
+        & frame.loc[industry_known, "signal_date"].lt(
+            frame.loc[industry_known, "industry_end"]
+        )
+    ).all()
+
+    out = frame.sort_values(ORDER).copy()
+    raw_before = out["raw_value"].reset_index(drop=True).copy()
+    pieces = []
+
+    for _, cross_section in out.groupby(GROUP, sort=True):
+        cs = cross_section.copy()
+        valid = cs["is_valid"] & cs["raw_value"].notna()
+        cs["clipped_value"] = None
+        cs["standardized_value"] = None
+        cs["processed_value"] = None
+        cs["processing_status"] = "INPUT_INVALID"
+
+        x = cs.loc[valid, "raw_value"]
+        if len(x) < config["min_cross_section"]:
+            cs.loc[valid, "processing_status"] = \
+                "INSUFFICIENT_CROSS_SECTION"
+            pieces.append(cs)
+            continue
+
+        median = x.median()
+        mad = (x - median).abs().median()
+        if mad <= config["mad_floor"]:
+            cs.loc[valid, "processing_status"] = "MAD_DEGENERATE"
+            pieces.append(cs)
+            continue
+
+        radius = config["k"] * config["mad_scale"] * mad
+        clipped = x.clip(median - radius, median + radius)
+        directed = clipped * cs.loc[valid, "direction_sign"]
+        std = directed.std(ddof=config["ddof"])
+        if std <= config["std_floor"]:
+            cs.loc[valid, "processing_status"] = "STD_DEGENERATE"
+            pieces.append(cs)
+            continue
+
+        standardized = (directed - directed.mean()) / std
+        cs.loc[valid, "clipped_value"] = clipped
+        cs.loc[valid, "standardized_value"] = standardized
+        cs.loc[valid, "processed_value"] = standardized
+        cs.loc[valid, "processing_status"] = "OK"
+
+        if config["exposure_method"] == "residual":
+            residual, status = residualize_asof(
+                standardized,
+                cs.loc[valid, "industry_asof"],
+                cs.loc[valid, "log_market_cap_asof"],
+                config,
+            )
+            cs.loc[valid, "processed_value"] = residual
+            cs.loc[valid, "processing_status"] = status
+        pieces.append(cs)
+
+    result = (
+        concat(pieces)
+        .sort_values(ORDER)
+        .reset_index(drop=True)
+    )
+    assert result["raw_value"].equals(raw_before)
+    assert len(result) == len(frame)
+    result["preprocess_method"] = config["method_name"]
+    result["preprocess_version"] = config["version"]
+    result["exposure_method"] = config["exposure_method"]
+    return result
+\end{lstlisting}
+
+示例中的 \texttt{residualize\_asof} 必须在单个分组内构造截距、一个基准行业之外的行业哑变量和点时对数市值，并在拟合前检查样本数、缺失、矩阵秩与共线性。若检查失败，它应返回明确状态而不是悄悄退回另一模型。若配置选择排名，应在相同位置替换 z-score 分支，并固定并列规则。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖以下边界：
+
+\begin{enumerate}
+  \item 使用全样本均值或标准差的实现被识别为错误；
+  \item 不同信号日不共享均值、分位数、MAD 或缩尾边界；
+  \item \texttt{is\_valid=False} 的原始值不进入任何截面统计；
+  \item 缺失值不被自动填成零；
+  \item 处理后 \texttt{raw\_value} 与输入逐元素完全一致；
+  \item MAD 或标准差为零时不产生无穷值，并输出退化状态；
+  \item 有效样本过少时输出
+  \texttt{INSUFFICIENT\_CROSS\_SECTION}；
+  \item 历史行业生效区间覆盖 \texttt{signal\_date}；
+  \item 市值可得日不晚于 \texttt{signal\_date}；
+  \item 小行业或缺失行业触发冻结降级规则；
+  \item 回归设计矩阵共线或秩不足时明确失败或降级；
+  \item \texttt{direction\_sign} 只能来自冻结定义卡；
+  \item 处理函数无法访问收益标签、成交结果或组合表现；
+  \item 相同输入和配置生成字节级或数值容差内一致结果；
+  \item 处理前后记录数、有效数、覆盖率和缺失原因可核对。
+\end{enumerate}
+
+\begin{practicebox}
+人工穿行至少选取两个信号日、三个因子、两个行业和不同市值层；每个截面核对有效集合、中位数、MAD、边界、方向符号、均值、标准差、行业统计与市值关系。另选一个缺失值、一个极端有效值、一个小行业和一个秩不足案例，记录预期状态、程序状态、参数版本与核验人备注。
+\end{practicebox}
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：在全样本上缩尾或标准化；先填零再计算统计量；让无效原始值参与分位数；覆盖
+\texttt{raw\_value}；跨信号日复用边界；从未来行业或市值表取值；按后续表现翻转方向、选择阈值或填补方法；把行业内处理和残差化混为一谈；设计矩阵秩不足仍返回数值；以及把暴露下降直接表述为因子改善。
+\end{warningbox}
+
+这些错误往往不会让程序崩溃，却会改变覆盖、分布和因子经济含义。发现问题后应从分组键、有效集合与点时输入重新核对，而不是查看后续表现后反推一个“更合适”的参数。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：冻结的预处理配置与版本；逐信号日、逐因子的覆盖率和缺失原因报告；MAD 边界、方向符号、均值和标准差参数表；处理后因子长表；行业与市值暴露诊断；原始、行业内与残差版本的结构对比；自动测试结果；以及匿名横截面人工穿行记录。
+\end{outputbox}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{处理前后诊断输出模板（结构模板，非实证结果）}
+  \label{tab:ch05-diagnostic-template}
+  \begin{tabularx}{\textwidth}{p{3.1cm} Y Y Y}
+    \toprule
+    诊断项 & 处理前记录 & 处理后记录 & 必须解释的变化 \\
+    \midrule
+    覆盖率与有效数量 & 按日、因子、行业、市值层 & 同口径重新汇总 & 是否因处理或暴露输入丢失 \\
+    分位数 & 预设分位点 & 同一分位点 & 尾部被压缩的程度 \\
+    均值与中位数 & 原始及方向统一后 & 标准化或残差版本 & 中心位置与方向是否一致 \\
+    标准差与 MAD & 当日有效截面 & 处理后有效截面 & 尺度退化或异常变化 \\
+    行业均值差异 & 各历史行业统计 & 同一行业统计 & 行业关系削弱或保留程度 \\
+    与对数市值关系 & 相关或回归系数 & 同口径重新估计 & 规模关系变化及其含义 \\
+    版本间相关 & 原始与基线版本 & 行业内与残差版本 & 信息保留程度，不接触收益 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 为什么覆盖率分母必须来自冻结信号池，而不是有值样本？
+  \item 缺失、无效和极端但有效分别应如何进入截面统计？
+  \item 无条件填零会怎样改变均值、排名和经济含义？
+  \item MAD 缩尾的 \(m_t\)、\(\mathrm{MAD}_t\)、\(k\) 与 \(c\) 分别是什么？
+  \item 为什么不同信号日不能共享缩尾边界或标准化参数？
+  \item 排名与 z-score 分别保留和丢失什么信息？
+  \item \texttt{direction\_sign} 为什么不能根据未来表现改变？
+  \item 行业内处理与行业、市值残差化有什么区别？
+  \item 中性化可能删除哪些原本具有经济含义的信息？
+  \item 如何证明 \texttt{raw\_value} 未被覆盖且处理函数未读取标签？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 6 章《单因子检验与可交易性诊断》的衔接}
+
+本章交付的是带覆盖率、分布参数、处理状态和暴露说明的可追溯因子版本。第 6 章可以在预先冻结的版本上评价预测力、单调性、换手与可交易性，但不得在看到检验结果后回到本章反复调整缩尾阈值、填补方法、方向或中性化方案。
+
+进入下一章前，应同时冻结原始版本、主基线版本和少量预注册敏感性版本，并写清
+\texttt{processed\_value} 的准确含义。这样，后续差异才能解释为方法选择的影响，而不是无法追溯的处理覆盖。
