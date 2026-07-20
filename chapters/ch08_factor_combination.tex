@@ -1,5 +1,623 @@
 \chapter{因子冗余与简单多因子合成}
+\label{ch:factor-combination}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:robustness} 已经把每个候选因子的公式、方向、预处理、股票池、标签、评价口径与适用边界冻结下来。本章只接收其中被判定为“通过”或“带条件通过”的版本，并回答两个连续问题：这些因子是否只是同一信息、数据来源或风险暴露的重复表达；若存在可解释的增量信息，如何形成透明、稳定且可复现的简单综合得分。
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 核对多因子阶段的资格、方向、尺度、版本和适用条件；
+  \item 区分单因子覆盖率、两两交集、共同有效样本和标签可评价样本；
+  \item 从经济逻辑、数据来源、因子值和共同暴露四层检查冗余；
+  \item 正确计算逐信号日截面相关，并解释为何低相关不等于增量有效；
+  \item 用预注册条件分组和留一法消融评价增量信息；
+  \item 在严格共同样本上构造等权综合得分，完整保留输入血缘；
+  \item 根据完整证据把因子标记为正式保留、带条件保留、排除或证据不足。
+\end{enumerate}
+
+\begin{principlebox}
+\textbf{[通用原则]} 因子版本一旦进入本章，就不能根据第 8—10 章的综合分、持仓或回测结果回头更换。低相关只能说明数值同步程度有限，不能自动证明经济信息具有增量价值。
+\end{principlebox}
+
+本章不优化历史权重，不实现 IC 权重、机器学习合成、动态因子择时、目标持仓、组合约束或正式含成本回测。后两类任务分别留给第 9 章和第 10 章。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=5mm,
+    every node/.style={font=\small},
+    quantCombineFrozen/.style={quantBlueCard, text width=3.0cm, minimum height=1.25cm, align=center},
+    quantCombineRedundancy/.style={quantCard, text width=3.0cm, minimum height=1.25cm, align=center},
+    quantCombineIncrement/.style={quantOrangeCard, text width=3.0cm, minimum height=1.25cm, align=center},
+    quantCombineScore/.style={quantGreenCard, text width=3.0cm, minimum height=1.25cm, align=center}
+  ]
+    \node[quantCombineFrozen] (frozen) {冻结因子\\资格、方向、版本};
+    \node[quantCombineRedundancy, right=of frozen] (redundancy) {冗余检查\\公式、数据、数值、暴露};
+    \node[quantCombineIncrement, right=of redundancy] (increment) {增量检查\\条件分组与留一消融};
+    \node[quantCombineScore, right=of increment] (score) {等权综合分\\共同样本与血缘};
+
+    \draw[quantArrow] (frozen) -- (redundancy);
+    \draw[quantArrow] (redundancy) -- (increment);
+    \draw[quantArrow] (increment) -- (score);
+  \end{tikzpicture}
+  \caption{从冻结因子到简单综合得分的研究闸门（结构示意）}
+  \label{fig:ch08-combination-flow}
+\end{figure}
+
+\section{为什么多个“有效因子”不一定提供更多信息}
+
+三个单独通过检验的因子，放在一起时未必形成三份独立信息。两个价格因子可能只是相近窗口的同一趋势；两个财务因子可能共享分母、公告修订和缺失机制；数值相关不高的两个因子也可能同时偏向小盘、低流动性或某些行业。若直接平均，重复信息会被隐含加倍，覆盖率和交易压力也可能恶化。
+
+因此，多因子阶段的核心不是“把好因子相加”，而是先说明每个因子新增了什么，再用最少自由度形成基线。冗余不是单一阈值可以决定的标签；它是公式、数据、数值与暴露证据共同支持的研究判断。
+
+\section{进入多因子阶段的冻结输入与资格}
+
+固定教学候选仍是中期动量、账面市值比价值和 ROE 类质量，但候选名称不等于正式资格。每个输入必须携带下列元数据：
+
+本章的数据范围只包括第 3 章冻结的信号日股票池和收益标签、第 5 章冻结的 \texttt{processed\_value}、\cref{ch:single-factor} 冻结的评价指标，以及 \cref{ch:robustness} 登记的资格与适用边界。标签只进入增量评价函数，绝不进入综合分构造函数。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{进入多因子阶段的冻结元数据}
+  \label{tab:ch08-frozen-registry}
+  \begin{tabularx}{\textwidth}{p{3.6cm} Y Y}
+    \toprule
+    字段 & 含义 & 本章约束 \\
+    \midrule
+    \texttt{factor\_name}、\texttt{factor\_version} & 因子身份与冻结公式版本 & 不从历史版本重新择优 \\
+    \texttt{preprocess\_version} & 第 5 章冻结的处理版本 & 不重新缩尾、标准化或中性化 \\
+    \texttt{universe\_version}、\texttt{label\_version} & 第 3 章股票池与收益标签版本 & 标签只用于增量评价，不进入得分构造 \\
+    \texttt{direction\_sign} & 已冻结的正向含义 & 本章不得翻转方向 \\
+    \texttt{robustness\_decision} & 第 7 章阶段决定 & 仅“通过”或“带条件通过”可正式纳入 \\
+    \texttt{applicability\_conditions} & 已披露的适用边界 & 原样进入组合版本与结论 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+若某因子在第 7 章被判定为“停止”，本章只保存其不参与评价的状态；若为“证据不足”，只能进入观察表或匿名教学示意，不能被包装成正式通过。正式候选集合由冻结注册表产生，而不是由“三因子案例”名称倒推。
+
+\section{因子方向、尺度和版本一致性}
+
+第 5 章的 \texttt{processed\_value} 已经完成方向统一和截面尺度处理，本章直接读取，不再次加工。版本核对应同时检查因子、预处理、股票池和标签；即使字段名相同，只要任一版本不同，就不能在没有新组合版本的情况下拼接。
+
+方向一致意味着“数值越高，冻结假设中的预期方向越强”，不意味着因子未来一定有效。尺度一致使等权平均具有可解释性，但不消除分布尾部、并列值或行业暴露差异，因此仍需在合成后复查分布与暴露。
+
+\begin{practicebox}
+\textbf{[正确实践]} 在任何相关或合成计算前，先验证 \texttt{security\_id + signal\_date + factor\_name + factor\_version + preprocess\_version} 唯一，并将实际纳入因子及其版本写入不可覆盖的组合配置。
+\end{practicebox}
+
+\section{覆盖率、共同有效样本和样本选择}
+
+设信号日 (t) 的冻结信号池为 (U^{\mathrm{signal}}_t)，因子 (f) 的有效集合为 (V_{f,t})。若正式集合为动量、价值与质量，则三因子共同有效集合及共同覆盖率为
+
+\begin{align}
+  V^{\mathrm{joint}}_t
+  &= V_{\mathrm{momentum},t}
+     \cap V_{\mathrm{value},t}
+     \cap V_{\mathrm{quality},t},
+  \label{eq:ch08-joint-set}\\
+  \operatorname{JointCoverage}_t
+  &= \frac{\left|V^{\mathrm{joint}}_t\right|}
+           {\left|U^{\mathrm{signal}}_t\right|}.
+  \label{eq:ch08-joint-coverage}
+\end{align}
+
+教学主基线只在全部正式纳入因子均有效时计算综合分，不默认填补缺失。缺失只改变 \texttt{joint\_valid} 与失败原因，不删除信号池原始记录。覆盖率报告必须从单因子、两两交集、全部因子交集、因子与标签共同可评价交集，一直追踪到最终综合分。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{因子覆盖率与共同交集模板}
+  \label{tab:ch08-coverage-template}
+  \begin{tabularx}{\textwidth}{p{4.0cm} p{3.2cm} p{2.7cm} Y}
+    \toprule
+    集合 & 分母 & 数量/覆盖率 & 必须诊断 \\
+    \midrule
+    各因子单独有效集 & 信号池 & -- & 时间、行业、市值与缺失原因 \\
+    任意两因子交集 & 信号池 & -- & 配对缺失机制与样本选择 \\
+    全部正式因子共同集 & 信号池 & -- & 共同覆盖损失及失败状态 \\
+    因子与标签可评价交集 & 信号池或共同集 & -- & 标签缺失与评价分母 \\
+    最终综合分有效集 & 信号池 & -- & \texttt{joint\_invalid\_reason} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+按可用因子平均、缺失指示变量或行业内填补可以作为预注册敏感性方案，但不能取代主基线，也不能依据后续表现选择。共同样本损失若集中在特定行业、市值层或时期，会改变综合分所代表的证券群体，必须单独解释。
+
+\section{冗余的四个层次}
+
+\cref{tab:ch08-redundancy-layers} 将冗余拆成四层。相关系数只是其中一层，不能替代其余三层。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{四层冗余检查}
+  \label{tab:ch08-redundancy-layers}
+  \begin{tabularx}{\textwidth}{p{2.8cm} p{5.0cm} Y}
+    \toprule
+    层次 & 核心检查 & 可能的重复来源 \\
+    \midrule
+    公式与经济逻辑 & 机制、分子分母、滚动窗口、方向与尺度变换 & 同一公式参数变体或单调变换 \\
+    数据来源 & 价格历史、财务字段、公告修订与缺失链路 & 同源数据错误或同一修订风险 \\
+    因子值 & 逐信号日共同样本上的 Pearson/Spearman 相关 & 截面排序长期同步 \\
+    风险与交易暴露 & 行业、对数市值、流动性、波动率及第 6 章已登记暴露 & 低数值相关下的共同风险集中 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+公式相似并不必然要求删除：不同窗口可能对应不同经济周期。反之，公式完全不同也不保证独立：质量与价值可能共同依赖账面权益，或因为财务覆盖机制而同时缺失。每层都应记录证据、状态与不确定性。
+
+\section{逐信号日因子相关性}
+
+对于信号日 (t) 和因子 (f,g)，只在两者共同有效的证券上计算截面相关：
+
+\begin{equation}
+  \rho_{f,g,t}
+  = \operatorname{Corr}_{i\in V_{f,t}\cap V_{g,t}}
+    \left(z_{f,i,t},z_{g,i,t}\right),
+  \label{eq:ch08-cross-sectional-correlation}
+\end{equation}
+
+教学主线以逐期 Spearman 相关为主，同时可保存 Pearson 作为尺度敏感性。不得把所有日期纵向堆叠后计算一个相关数，因为跨期分布变化和同一证券重复观察会混入截面关系。每个相关值必须携带共同样本数、共同覆盖率和状态；常数因子、样本不足或大量并列时返回明确状态。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{逐期相关性汇总模板}
+  \label{tab:ch08-correlation-template}
+  \begin{tabularx}{\textwidth}{p{3.2cm} p{2.3cm} p{2.4cm} p{2.7cm} Y}
+    \toprule
+    因子对 & 有效期数 & 共同样本/覆盖 & 相关时间分布 & 分期与失败状态 \\
+    \midrule
+    动量—价值 & -- & -- & 中位数、分位区间 & -- \\
+    动量—质量 & -- & -- & 中位数、分位区间 & -- \\
+    价值—质量 & -- & -- & 中位数、分位区间 & -- \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+除全期分布外，还应沿用第 7 章冻结的时间分期，检查相关结构是否发生变化。相关阈值只能来自预注册配置，不能看图后移动。
+
+\section{相关性低为什么仍不足以证明增量价值}
+
+相关性回答“两个截面排序是否同步”，增量价值回答“在已有信息条件下，新因子是否改善冻结评价框架”。二者不是同一问题。一个低相关因子可能只是噪声、低覆盖或高换手；也可能与已有因子共同偏向小盘股。只有在共同样本、共同评价区间和同一指标模板下仍提供可解释变化，才形成增量证据。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{共同暴露比较模板}
+  \label{tab:ch08-exposure-template}
+  \begin{tabularx}{\textwidth}{p{3.0cm} p{2.1cm} p{2.1cm} p{2.1cm} p{2.1cm} Y}
+    \toprule
+    输入或组合 & 行业分布 & 对数市值 & 流动性 & 波动率 & 其他登记暴露/状态 \\
+    \midrule
+    中期动量 & -- & -- & -- & -- & -- \\
+    账面市值比价值 & -- & -- & -- & -- & -- \\
+    ROE 类质量 & -- & -- & -- & -- & -- \\
+    完整等权综合分 & -- & -- & -- & -- & -- \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{条件分组和增量信息}
+
+条件分组先冻结一个已有因子的分组，再在每组内观察另一因子的排序、RankIC 或分组单调性。若质量因子在各价值组内仍保持方向与可解释性，它比单纯“价值—质量低相关”提供更直接的条件增量证据。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=5mm and 6mm,
+    every node/.style={font=\small},
+    quantConditionRoot/.style={quantBlueCard, text width=3.0cm, minimum height=1.0cm, align=center},
+    quantConditionBucket/.style={quantCard, text width=3.2cm, minimum height=1.0cm, align=center},
+    quantConditionReadout/.style={quantGreenCard, text width=3.2cm, minimum height=1.0cm, align=center}
+  ]
+    \node[quantConditionRoot] (root) {冻结共同样本\\按价值因子分组};
+    \node[quantConditionBucket, right=of root, yshift=1.35cm] (low) {价值低组\\组内排序质量};
+    \node[quantConditionBucket, right=of root] (mid) {价值中组\\组内排序质量};
+    \node[quantConditionBucket, right=of root, yshift=-1.35cm] (high) {价值高组\\组内排序质量};
+    \node[quantConditionReadout, right=16mm of mid] (readout) {统一评价模板\\方向、覆盖、单调性与状态};
+
+    \draw[quantArrow] (root) -- (low);
+    \draw[quantArrow] (root) -- (mid);
+    \draw[quantArrow] (root) -- (high);
+    \draw[quantSoftArrow] (low) -- (readout);
+    \draw[quantSoftArrow] (mid) -- (readout);
+    \draw[quantSoftArrow] (high) -- (readout);
+  \end{tikzpicture}
+  \caption{条件分组的固定顺序（结构示意，非实证结果）}
+  \label{fig:ch08-conditional-groups}
+\end{figure}
+
+分组顺序、组数、最小样本和评价指标必须在运行前固定。不能尝试所有排列后只展示最有利顺序。样本不足时返回状态；条件分组只判断新信息是否在已有因子条件下仍存在，不用于构造复杂交互权重。
+
+\section{留一法消融实验}
+
+若正式因子集合为 (\mathcal{F})，完整综合分记为 (S^{\mathrm{all}}_{i,t})，移除因子 (f) 后记为 (S^{-f}_{i,t})。留一法消融（leave-one-out ablation）比较完整组合与每一个留一组合，观察覆盖、预测、暴露和交易特征如何变化。
+
+比较应尽量固定共同样本。若删除一个因子使更多证券获得得分，必须把“信息变化”和“样本变化”分开报告，不能把全部指标差异解释为该因子的贡献。所有留一组合使用与 \cref{ch:single-factor} 相同的覆盖率、RankIC、分组单调性、暴露、因子换手和成本敏感性模板，并且不得只展示移除后下降的情况。
+
+\section{透明等权综合得分}
+
+设最终允许纳入的冻结因子集合为 \(\mathcal{F}\)，每个因子的正向 \texttt{processed\_value} 为 (z_{f,i,t})。教学主基线定义为
+
+\begin{equation}
+  S_{i,t}
+  = \frac{1}{|\mathcal{F}|}
+    \sum_{f\in\mathcal{F}} z_{f,i,t},
+  \qquad i\in \bigcap_{f\in\mathcal{F}} V_{f,t}.
+  \label{eq:ch08-equal-weight-score}
+\end{equation}
+
+等权不是最优权重，而是自由度低、估计风险小且容易复核的基线。因子数、方向和版本由冻结配置决定，权重严格相等且总和为 1。若只有两个因子通过，就构造明确命名的两因子等权分；停止或证据不足的因子不能以零权重隐藏在“正式三因子”名称中。
+
+IC 权重、风险调整权重和监督模型可以作为进阶方向，但本章不展开、不实现，也不暗示它们必然优于等权。综合分必须写入新字段，不能覆盖任何单因子的 \texttt{processed\_value}，构造过程也不能读取未来收益。
+
+\section{缺失因子与共同样本处理}
+
+主基线将任何正式因子缺失标记为 \texttt{joint\_valid = False}，并保留 \texttt{joint\_invalid\_reason}。不把缺失值填为 0，因为 0 在标准化尺度上通常代表截面中性，而“未知”并不等于“中性”。也不默认按可用因子平均，因为不同证券会因此使用不同经济模型。
+
+共同样本规则的代价是覆盖率下降。报告必须按时间、行业和市值拆解损失，并说明适用边界。预注册的可用因子平均、缺失指示变量或行业内填补，若被运行，应使用独立 \texttt{combination\_version} 并完整报告，不能覆盖主基线。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 最小共同覆盖率、缺失原因优先级、允许的敏感性方案及行业/市值分层边界依赖真实数据与团队规则；本章不虚构阈值，也不根据后续组合结果选择缺失方案。
+\end{confirmbox}
+
+\section{综合分的覆盖率、分布、暴露和换手}
+
+综合分生成后仍需诊断，而不能直接进入持仓。覆盖率检查共同样本损失；分布检查均值、尺度、极端值和并列；暴露检查行业、市值、流动性和波动率；因子换手衡量分数排序随信号日变化的交易压力。成本敏感性仍使用第 6 章冻结代理，不在本章运行正式组合成本回测。
+
+若等权后暴露增强，可能是多个因子共同偏向同一风险维度；若换手显著上升，可能由高换手因子主导。此时只能形成保留条件、排除证据或第 9 章约束输入，不能在本章通过历史优化权重来掩盖问题。
+
+\section{原始候选、完整组合和留一组合的比较}
+
+\begingroup
+\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\begin{longtable}{@{}p{2.0cm}p{2.2cm}p{1.05cm}p{1.05cm}p{1.0cm}p{1.0cm}p{1.0cm}p{1.0cm}p{1.1cm}p{1.6cm}@{}}
+\caption{原始候选、完整组合与留一组合比较模板}\label{tab:ch08-ablation-template}\\
+\toprule
+对象 & 因子集合/样本规则 & 覆盖 & RankIC & 单调性 & 暴露 & 换手 & 成本 & 失败状态 & 决策解释 \\
+\midrule
+\endfirsthead
+\toprule
+对象 & 因子集合/样本规则 & 覆盖 & RankIC & 单调性 & 暴露 & 换手 & 成本 & 失败状态 & 决策解释 \\
+\midrule
+\endhead
+中期动量 & 单因子有效样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+账面市值比价值 & 单因子有效样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+ROE 类质量 & 单因子有效样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+完整组合 & 全部正式因子共同样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+移除动量 & 与完整组合同样本；另报扩展样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+移除价值 & 与完整组合同样本；另报扩展样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+移除质量 & 与完整组合同样本；另报扩展样本 & -- & -- & -- & -- & -- & -- & -- & -- \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+表中不得填入虚构结果。若实际正式集合少于三个因子，只生成对应的完整组合和留一组合，不保留误导性的三因子行名。
+
+\section{一个匿名教学案例}
+
+\begin{casebox}
+\textbf{仅用于解释冗余、增量和合成逻辑，不代表真实证券、真实数据库或实证研究结果。}
+
+在匿名信号日 (t^\star)，八只匿名证券具有下列冻结标准化值。动量与价值的排序大体同步；质量与二者的排序差异较大，但行业甲的质量值整体偏正，提示仍需检查共同暴露。证券 F 的质量缺失，因此不会进入三因子主基线共同样本。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c c r r r}
+  \toprule
+  证券 & 匿名行业 & 动量 & 价值 & 质量 \\
+  \midrule
+  A & 甲 & 1.2 & 1.1 & 0.3 \\
+  B & 甲 & 0.8 & 0.9 & 0.5 \\
+  C & 乙 & 0.4 & 0.3 & -0.2 \\
+  D & 乙 & 0.1 & 0.0 & 0.1 \\
+  E & 丙 & -0.3 & -0.4 & 0.2 \\
+  F & 丙 & -0.6 & -0.5 & 缺失 \\
+  G & 甲 & -0.9 & -1.0 & 0.4 \\
+  H & 乙 & -1.2 & -1.1 & -0.6 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+共同样本为 \(\{A,B,C,D,E,G,H\}\)，共同覆盖率为 \(7/8\)。完整等权分和示例性的“移除价值”留一分如下；二者都固定在相同的七只证券上，避免把新增样本误认作价值因子的贡献。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c r r}
+  \toprule
+  证券 & \(S^{\mathrm{all}}=(M+V+Q)/3\) & \(S^{-V}=(M+Q)/2\) \\
+  \midrule
+  A & 0.87 & 0.75 \\
+  B & 0.73 & 0.65 \\
+  C & 0.17 & 0.10 \\
+  D & 0.07 & 0.10 \\
+  E & -0.17 & -0.05 \\
+  G & -0.50 & -0.25 \\
+  H & -0.97 & -0.90 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+\end{casebox}
+
+这个玩具例子不使用收益标签，也不作因子去留结论。动量与价值的高相关只是冗余风险信号；质量的低相关也不能自动证明增量价值。下一步仍需条件分组、完整留一评价和共同暴露检查。若在移除质量时使用包含 F 的八只证券，还必须把覆盖率变化与信息变化分开。
+
+\section{pandas 风格最小实现}
+
+\cref{lst:ch08-combination} 将得分构造和增量评价分开。构造函数不接收标签；评价函数只使用第 6 章冻结指标与预注册规则，且不会把低相关自动翻译为“通过”。
+
+\begin{lstlisting}[
+  caption={冻结因子的冗余评价与等权合成最小接口},
+  label={lst:ch08-combination}
+]
+QUALIFIED = {"PASS", "CONDITIONAL_PASS"}
+FORBIDDEN_SCORE_COLUMNS = {
+    "future_return", "portfolio_weight", "orders",
+    "backtest_result",
+}
+FORBIDDEN_EVALUATION_COLUMNS = {
+    "portfolio_weight", "orders", "backtest_result",
+}
+
+def validate_frozen_inputs(factors, registry, config):
+    assert FORBIDDEN_SCORE_COLUMNS.isdisjoint(factors.columns)
+    key = [
+        "security_id", "signal_date", "factor_name",
+        "factor_version", "preprocess_version",
+    ]
+    assert not factors.duplicated(key).any()
+    assert factors["signal_date"].is_monotonic_increasing
+
+    selected = registry[
+        registry["factor_name"].isin(config.included_factors)
+    ].copy()
+    assert not selected["factor_name"].duplicated().any()
+    assert set(selected["robustness_decision"]) <= QUALIFIED
+    assert selected["direction_frozen"].all()
+    assert selected["preprocess_frozen"].all()
+    assert_versions_match(factors, selected, config)
+    return selected
+
+def build_equal_weight_score(
+    frozen_factors,
+    frozen_registry,
+    combination_config,
+):
+    selected = validate_frozen_inputs(
+        frozen_factors, frozen_registry, combination_config
+    )
+    names = tuple(combination_config.included_factors)
+    assert set(names) == set(selected["factor_name"])
+
+    signal_keys = combination_config.signal_universe[[
+        "signal_date", "security_id"
+    ]].drop_duplicates()
+    base_index = make_multi_index(signal_keys)
+    wide = frozen_factors.pivot(
+        index=["signal_date", "security_id"],
+        columns="factor_name",
+        values="processed_value",
+    ).reindex(index=base_index, columns=names)
+    joint_valid = wide.notna().all(axis=1)
+    n_factors = len(names)
+    equal_weight = 1.0 / n_factors
+    assert abs(equal_weight * n_factors - 1.0) < 1e-12
+
+    score = wide.sum(axis=1, min_count=n_factors) / n_factors
+    assert score.notna().equals(joint_valid)
+    coverage = joint_valid.groupby(level="signal_date").mean()
+
+    output = make_score_output(
+        score=score,
+        joint_valid=joint_valid,
+        joint_invalid_reason=missing_factor_reason(wide),
+        joint_coverage=coverage,
+        included_factors=names,
+        included_factor_count=n_factors,
+        factor_versions=selected.set_index("factor_name")[
+            "factor_version"
+        ].to_dict(),
+        preprocess_versions=selected.set_index("factor_name")[
+            "preprocess_version"
+        ].to_dict(),
+        combination_method="equal_weight_joint_sample",
+        combination_version=make_combination_version(
+            factor_names=names,
+            config_hash=hash_frozen_config(
+                selected, combination_config
+            ),
+        ),
+        applicability_conditions=selected.set_index("factor_name")[
+            "applicability_conditions"
+        ].to_dict(),
+        score_status=joint_valid.map({
+            True: "OK", False: "MISSING_FORMAL_FACTOR"
+        }),
+    )
+    assert_unique(output, [
+        "security_id", "signal_date", "combination_version"
+    ])
+    combination_store.append_only(output)
+    return output
+
+def evaluate_redundancy_and_increment(
+    frozen_factors,
+    frozen_labels,
+    evaluation_config,
+):
+    assert FORBIDDEN_EVALUATION_COLUMNS.isdisjoint(
+        frozen_factors.columns
+    )
+    assert FORBIDDEN_EVALUATION_COLUMNS.isdisjoint(
+        frozen_labels.columns
+    )
+
+    correlations = []
+    for signal_date, cross_section in frozen_factors.groupby(
+        "signal_date", sort=True
+    ):
+        correlations.extend(pairwise_spearman_with_status(
+            cross_section,
+            min_common_n=evaluation_config.min_common_n,
+            report_common_n=True,
+        ))
+
+    conditional = run_registered_conditional_groups(
+        frozen_factors,
+        frozen_labels,
+        rules=evaluation_config.conditional_rules,
+    )
+    ablation_scores = build_registered_leave_one_versions(
+        frozen_factors,
+        frozen_registry=evaluation_config.frozen_registry,
+        combination_configs=evaluation_config.ablation_configs,
+    )
+    ablations = evaluate_frozen_scores(
+        ablation_scores,
+        frozen_labels,
+        common_sample_policy=evaluation_config.common_sample_policy,
+        frozen_metrics=evaluation_config.frozen_metrics,
+    )
+    return {
+        "correlations": correlations,
+        "conditional_groups": conditional,
+        "ablations": ablations,
+        "coverage_differences": compare_sample_coverage(ablations),
+        "decision_inputs": assemble_evidence_without_auto_pass(
+            correlations, conditional, ablations
+        ),
+    }
+\end{lstlisting}
+
+\texttt{build\_registered\_leave\_one\_versions} 为每个留一组合产生独立且不可覆盖的 \texttt{combination\_version}。所有阈值和去留规则来自配置；相同输入、配置与版本应产生相同输出。任何正式决定都由完整证据表和复核人作出，而不是由代码按最低相关或单一最好指标自动选择。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖：
+
+\begin{enumerate}
+  \item 未通过第 7 章资格的因子不得进入正式合成；
+  \item 因子、预处理、股票池或标签版本不匹配时失败；
+  \item 同一主键和版本重复时失败；
+  \item 不同信号日不得共同计算截面相关；
+  \item 每个相关值必须报告共同样本数与覆盖率；
+  \item 样本不足、常数因子或大量并列时返回明确状态；
+  \item 等权综合分构造不得读取未来标签；
+  \item 缺失因子不得自动填零；
+  \item 主基线共同样本必须满足所有正式因子有效；
+  \item 权重总和必须等于 1；
+  \item \texttt{included\_factor\_count} 与实际纳入数量一致；
+  \item 停止因子不能出现在 \texttt{included\_factors}；
+  \item 留一组合不能覆盖完整组合或其他历史版本；
+  \item 消融比较必须使用相同评价区间和冻结指标；
+  \item 样本不一致时必须报告覆盖率差异；
+  \item 低相关不能被代码自动判定为“增量通过”；
+  \item 冗余阈值和去留规则只能来自配置；
+  \item 得分构造函数不能访问 \texttt{portfolio\_weight}、\texttt{orders} 或 \texttt{backtest\_result}；
+  \item 相同输入、配置和版本生成一致结果；
+  \item 组合版本变更必须保留旧输出。
+\end{enumerate}
+
+\begin{practicebox}
+\textbf{[正确实践]} 人工至少核对一个完整有效样本、一个缺失因子样本、一个常数或样本不足相关状态、一个条件分组、一个同样本留一比较和一个覆盖扩展比较。逐项确认方向未翻转、值未重新处理、标签未进入得分、权重相等、版本可追溯且旧输出未覆盖。
+\end{practicebox}
+
+\section{因子保留、条件保留、排除或证据不足}
+
+每个候选因子在本章结束时只能进入 \cref{tab:ch08-factor-decisions} 的一个状态。决定必须同时讨论第 7 章资格、公式和数据来源重叠、逐期数值相关、共同暴露、条件分组、留一消融、覆盖率变化、换手与成本敏感性以及主要不确定性。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{因子去留决策表}
+  \label{tab:ch08-factor-decisions}
+  \begin{tabularx}{\textwidth}{p{3.0cm} p{5.4cm} Y}
+    \toprule
+    状态 & 证据要求 & 对综合分的处理 \\
+    \midrule
+    正式保留 & 资格合格，增量证据可解释，覆盖与交易压力可接受 & 纳入冻结正式集合 \\
+    带条件保留 & 存在明确适用边界或共同暴露，但条件已登记 & 纳入并携带适用条件 \\
+    因明显冗余而排除 & 多层证据显示与已有信息重复，留一结果不支持必要性 & 不进入正式集合，保留记录 \\
+    因缺乏增量证据而排除 & 低相关或单因子有效，但条件与消融不支持增量 & 不进入正式集合 \\
+    证据不足 & 覆盖、样本或评价证据不足以判断 & 仅作观察项，不进入正式集合 \\
+    第 7 章已停止 & 未取得进入本章的资格 & 不参与正式冗余和增量评价 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 相关阈值、最小共同样本、条件分组规则、去留闸门、成本敏感性参数和适用边界必须由真实研究配置事前冻结。本章不提供团队阈值，也不允许因三因子综合分的某项指标更好而倒推三个因子都有增量价值。
+\end{confirmbox}
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：让停止或证据不足因子混入正式集合；本章重新处理或翻转因子；把所有日期堆叠计算单个相关；忽略共同样本数量；将低相关直接判为增量有效；只比较一个收益数字；只展示有利的条件顺序或留一结果；把覆盖变化全部解释为信息贡献；缺失填零；按可用因子平均却沿用主版本名；根据测试集或正式回测优化权重；以及用零权重把未通过因子隐藏在“三因子”名称中。
+\end{warningbox}
+
+这些错误会增加未记录的研究自由度，使综合分的名称、样本和经济含义彼此脱节。修复时应恢复冻结输入、完整组合版本与全部比较记录，而不是继续调整权重寻找更好结果。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：正式候选资格表；方向、尺度和版本核对；单因子与共同覆盖率报告；四层冗余检查；逐期相关与共同暴露模板；预注册条件分组；完整及留一消融报告；等权综合分定义；可追溯输出 schema；自动测试与人工核对结果；因子去留决策；以及进入第 9 章的唯一冻结 \texttt{combination\_version}。
+\end{outputbox}
+
+\begingroup
+\small
+\begin{longtable}{@{}p{3.9cm}p{5.0cm}p{5.9cm}@{}}
+\caption{综合分统一输出 schema}\label{tab:ch08-score-schema}\\
+\toprule
+字段 & 含义 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+字段 & 含义 & 审计要求 \\
+\midrule
+\endhead
+\texttt{security\_id}、\texttt{signal\_date} & 稳定证券主键与信号日 & 与信号池一一对应 \\
+\texttt{combined\_score} & 新生成的综合得分 & 不覆盖单因子 \texttt{processed\_value} \\
+\texttt{included\_factors} & 实际纳入因子集合 & 名称反映真实集合 \\
+\texttt{included\_factor\_count} & 实际因子数量 & 与集合和权重一致 \\
+\texttt{factor\_versions} & 各因子冻结版本 & 可还原每个输入值 \\
+\texttt{preprocess\_versions} & 各预处理冻结版本 & 不在本章重新处理 \\
+\texttt{combination\_method} & 合成方法 & 主基线为共同样本等权 \\
+\texttt{combination\_version} & 唯一组合版本 & 因子集合或规则变化即新版本 \\
+\texttt{joint\_valid} & 全部正式因子是否有效 & 不把缺失填零 \\
+\texttt{joint\_invalid\_reason} & 共同样本失败原因 & 保留信号池原始记录 \\
+\texttt{joint\_coverage} & 当日共同覆盖率 & 分母为冻结信号池 \\
+\texttt{score\_status} & 成功或明确失败状态 & 常数、缺失或版本错误可追溯 \\
+\texttt{applicability\_conditions} & 第 7、8 章条件 & 随组合版本冻结 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+同时保存单因子长表或宽表快照，使任一综合分都能还原到具体证券、日期、因子值和版本。同一证券、日期和组合版本必须唯一，历史综合分不可覆盖。
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 哪些第 7 章决定允许因子进入正式合成候选集？
+  \item 为什么公式不同、数值低相关的因子仍可能冗余？
+  \item 单因子覆盖、两两交集、共同覆盖和标签可评价覆盖有何区别？
+  \item 为什么不能把所有日期堆叠后只计算一个因子相关？
+  \item 条件分组比低相关多提供了什么信息？
+  \item 留一组合样本扩大时，为什么要分开报告覆盖变化？
+  \item 等权基线降低了哪些估计风险，又没有解决哪些问题？
+  \item 缺失值为什么不能默认填成 0？
+  \item 正式集合只有两个因子时，组合名称和权重应如何变化？
+  \item 进入第 9 章前必须冻结哪些输入、条件和组合版本？
+\end{enumerate}
+\end{quizbox}
+
+\section{与第 9 章《从综合得分到约束型多头组合》的衔接}
+
+本章输出的是证券层面的冻结综合得分，不是目标持仓。第 9 章将把唯一 \texttt{combination\_version} 转化为约束型多头组合，并处理行业、个股、流动性和换手约束；它不能重新缩放因子、优化本章权重或根据组合结果更换因子版本。
+
+交接包至少包含综合分、共同样本与失败原因、因子血缘、适用条件、暴露与换手诊断以及因子去留记录。若本章结论仍为证据不足，不能为了推进组合构建而把观察项伪装成正式因子；只有冻结的正式或带条件正式集合可以进入下一章。
