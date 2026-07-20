@@ -1,5 +1,792 @@
 \chapter{含成本回测与结果解释}
+\label{ch:backtest}
 
-\section*{待编写}
+\section{本章导读与学习目标}
 
-% TODO: 按 P03 后续里程碑要求编写本章。
+第 \cref{ch:portfolio} 已经冻结了每个信号日的 \texttt{portfolio\_version}、目标权重、期望交易差额、现金权重、约束状态和降级轨迹。本章不再回答“想持有什么”，而是回答：\keyterm{目标组合经过下一交易日的交易状态、成交价格代理和费用后，实际持仓、现金与净结果是什么？}
+
+完成本章后，读者应能够：
+
+\begin{enumerate}
+  \item 按信号、目标、订单、成交、持仓和收益的顺序重放一次周度调仓；
+  \item 从冻结期望交易差额生成带版本的订单，并区分完全成交、部分成交和未成交；
+  \item 只在成交日读取当时的停牌、价格限制、价格代理和其他执行状态；
+  \item 用成交更新证券数量和现金，证明两个账本分别守恒且合计为组合净值；
+  \item 区分显性费用、滑点和冲击成本，并只对实际成交计费；
+  \item 基于实际持仓计算毛收益、成本和净收益，而不是把目标权重当作事实；
+  \item 解释目标与实际偏差、四类换手、未成交和现金对结果的影响；
+  \item 从预测力、风险、换手、成本、可交易性和失败模式等维度形成有边界的研究结论。
+\end{enumerate}
+
+\begin{principlebox}
+\textbf{[通用原则]} 回测是一个守恒的状态机，不是一条“目标权重乘未来收益”的公式。未成交买单保留现金，未成交卖单保留旧证券；实际持仓只能由前期账本、公司行动和本次真实模拟成交更新。
+\end{principlebox}
+
+本章不实现券商接口、OMS/EMS、高频成交模型、完整容量模型、生产监控或上线审批，也不允许用本章结果返回重选第 4---9 章的因子、参数、权重、持股数量或约束。
+
+\section{为什么目标组合不等于回测持仓}
+
+目标权重是信号日结束后的决策，实际持仓是下一交易日订单处理后的事实。二者之间至少隔着数量取整、可用现金、成交日状态、价格代理、部分成交和费用。目标买入可能失败而留下现金；目标卖出也可能失败，使已经不在目标中的证券继续留在账本。若直接使用目标权重计算收益，上述执行后果都会被抹去，回测就会系统性高估信号被实现的程度。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{目标、订单、成交和持仓的职责边界}
+  \label{tab:ch10-object-responsibilities}
+  \begin{tabularx}{\textwidth}{p{2.4cm} p{4.2cm} p{3.2cm} Y}
+    \toprule
+    对象 & 回答的问题 & 形成时点 & 不可替代的证据 \\
+    \midrule
+    目标组合 & 希望持有什么 & 信号日约束完成后 & \texttt{portfolio\_version}、目标权重 \\
+    订单 & 请求买卖什么 & 下一交易日前按冻结规则生成 & 方向、请求数量、订单状态与版本 \\
+    成交 & 实际执行了什么 & 成交日状态和代理可得后 & 成交数量、价格、未成交量与原因 \\
+    实际持仓 & 执行后真正持有什么 & 证券账本更新后 & 前数量、带符号成交量、后数量 \\
+    现金 & 还有多少可用资金 & 买卖、费用和公司现金流入账后 & 期初现金、各现金流和期末现金 \\
+    收益 & 实际持仓产生了什么结果 & 估值区间结束后 & 证券、现金、公司行动与成本分解 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{回测事件顺序}
+
+贯穿案例继续采用周度信号、下一交易日成交代理和非重叠持有区间。正确事件链见 \cref{fig:ch10-event-chain}。成交失败可以改变实际持仓，却不能回到链条左侧修改信号、排名或目标。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=2.7mm,
+    every node/.style={font=\footnotesize},
+    quantBacktestSignal/.style={quantBlueCard, text width=2.0cm, minimum height=1.05cm, align=center},
+    quantBacktestTarget/.style={quantCard, text width=2.0cm, minimum height=1.05cm, align=center},
+    quantBacktestOrder/.style={quantCard, text width=2.0cm, minimum height=1.05cm, align=center},
+    quantBacktestFill/.style={quantOrangeCard, text width=2.0cm, minimum height=1.05cm, align=center},
+    quantBacktestHolding/.style={quantGreenCard, text width=2.0cm, minimum height=1.05cm, align=center},
+    quantBacktestReturn/.style={quantBlueCard, text width=2.0cm, minimum height=1.05cm, align=center}
+  ]
+    \node[quantBacktestSignal] (signal) {信号日截止\\冻结综合分};
+    \node[quantBacktestTarget, right=of signal] (target) {生成目标\\期望交易差额};
+    \node[quantBacktestOrder, right=of target] (order) {下一交易日\\生成订单};
+    \node[quantBacktestFill, right=of order] (fill) {读取当时状态\\成交或未成交};
+    \node[quantBacktestHolding, right=of fill] (holding) {扣费并更新\\持仓与现金};
+    \node[quantBacktestReturn, right=of holding] (ret) {持有并估值\\记录实际收益};
+
+    \draw[quantArrow] (signal) -- (target);
+    \draw[quantArrow] (target) -- (order);
+    \draw[quantArrow] (order) -- (fill);
+    \draw[quantArrow] (fill) -- (holding);
+    \draw[quantArrow] (holding) -- (ret);
+  \end{tikzpicture}
+  \caption{信号、目标、订单、成交、持仓与收益的完整事件链（结构示意）}
+  \label{fig:ch10-event-chain}
+\end{figure}
+
+展开后，单次循环严格遵循：信号日收盘截止；读取冻结综合分；生成目标组合；计算期望交易差额；下一交易日生成订单；读取成交阶段状态；模拟成交或未成交；只对成交部分扣费；更新证券持仓和现金；持有至下一次调仓；记录组合收益；再进入下一循环。\cref{ch:universe-labels} 的标签时点应与这里的成交代理和持有区间一致，但研究标签本身不能替代实际组合账本。
+
+\section{本章冻结输入、状态和禁止回改项}
+
+本章读取 \texttt{portfolio\_version}、\texttt{target\_weight}、\texttt{desired\_trade\_weight}、\texttt{previous\_actual\_weight}、\texttt{cash\_weight}、\texttt{constraint\_status}、\texttt{degradation\_trace}、\texttt{signal\_date}、\texttt{execution\_date} 和 \texttt{point\_in\_time\_data\_versions}。运行前应验证组合版本已经冻结、主键唯一、成交日严格晚于信号日，且输入按照信号日和成交日稳定排序。
+
+成交阶段可以新增订单、成交、持仓、现金、费用和收益记录，但不得覆盖目标权重，也不得删除失败订单。下一交易日停牌、价格限制、成交代理缺失或状态异常，只能改变订单结果。它们不能删除信号日证券、重算综合分、重排候选或修改第 9 章的目标组合。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 资金规模、证券最小交易单位、数量取整、订单有效期、可用现金规则、成交状态字段、状态生效时间和异常优先级必须由历史制度、数据字典与团队配置共同确认。所有规则都应带 \texttt{execution\_version} 或配置版本，不得写成无版本常量。
+\end{confirmbox}
+
+\section{从期望交易差额到订单}
+
+令信号日为 \(t\)，对应成交日为 \(\tau(t)\)，冻结组合净值为 \(\mathrm{NAV}^{\mathrm{freeze}}_t\)。第 9 章给出的期望交易权重与教学名义金额为
+
+\begin{align}
+  d_{i,t}
+  &= w^{\mathrm{target}}_{i,t}-w^{\mathrm{previous}}_{i,t},
+  \label{eq:ch10-desired-weight}\\
+  N^{\mathrm{desired}}_{i,t}
+  &= d_{i,t}\,\mathrm{NAV}^{\mathrm{freeze}}_t.
+  \label{eq:ch10-desired-notional}
+\end{align}
+
+\(N^{\mathrm{desired}}>0\) 表示期望买入，\(N^{\mathrm{desired}}<0\) 表示期望卖出。若订单数量使用非负绝对值，并以 \(s_i\in\{+1,-1\}\) 分别表示买、卖，则取整前请求数量可写为
+
+\begin{equation}
+  q^{\mathrm{request}}_{i,t}
+  = \frac{\left|N^{\mathrm{desired}}_{i,t}\right|}
+  {P^{\mathrm{proxy}}_{i,\tau(t)}}.
+  \label{eq:ch10-requested-quantity}
+\end{equation}
+
+订单只是请求，不是成交。最小订单单位、舍入后零数量、卖出可用数量和现金预占都要转化为明确状态。每条订单至少保存 \texttt{order\_id}、\texttt{security\_id}、\texttt{signal\_date}、\texttt{execution\_date}、\texttt{portfolio\_version}、\texttt{side}、\texttt{desired\_trade\_weight}、\texttt{desired\_notional}、\texttt{desired\_quantity}、\texttt{order\_status}、\texttt{order\_reason} 和 \texttt{order\_version}。
+
+\section{成交日交易状态}
+
+只有到 \(\tau(t)\) 才读取成交阶段状态。教学状态机至少区分可以成交、只能部分成交、无法成交、状态未知和订单无效，见 \cref{fig:ch10-order-state}。具体状态可以由停牌、价格限制、价格代理缺失、证券状态异常、数量不合法、可用现金不足或数据异常触发；同一订单命中多个原因时，应保留完整原因集合或冻结优先级。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=5mm and 7mm,
+    every node/.style={font=\footnotesize},
+    quantOrderRoot/.style={quantBlueCard, text width=2.7cm, align=center},
+    quantOrderDecision/.style={diamond, aspect=2.2, draw=WarmOrange, fill=WarmOrange!8, align=center, inner sep=2pt},
+    quantOrderFull/.style={quantGreenCard, text width=2.3cm, align=center},
+    quantOrderPartial/.style={quantCard, text width=2.3cm, align=center},
+    quantOrderUnfilled/.style={quantOrangeCard, text width=2.3cm, align=center}
+  ]
+    \node[quantOrderRoot] (order) {带版本的合法订单};
+    \node[quantOrderDecision, right=of order] (valid) {状态可判定且订单有效？};
+    \node[quantOrderUnfilled, above right=5mm and 8mm of valid] (invalid) {无效或未知\\保留原因证据};
+    \node[quantOrderDecision, below right=5mm and 8mm of valid] (capacity) {允许成交数量？};
+    \node[quantOrderUnfilled, right=14mm of capacity, yshift=-1.25cm] (none) {零：未成交};
+    \node[quantOrderPartial, right=14mm of capacity] (partial) {介于零与请求量：部分成交};
+    \node[quantOrderFull, right=14mm of capacity, yshift=1.25cm] (full) {等于请求量：完全成交};
+
+    \draw[quantArrow] (order) -- (valid);
+    \draw[quantArrow] (valid) -- node[above left]{否} (invalid);
+    \draw[quantArrow] (valid) -- node[below left]{是} (capacity);
+    \draw[quantArrow] (capacity) -- (none);
+    \draw[quantArrow] (capacity) -- (partial);
+    \draw[quantArrow] (capacity) -- (full);
+  \end{tikzpicture}
+  \caption{订单与成交状态机（结构示意；具体状态规则需实际确认）}
+  \label{fig:ch10-order-state}
+\end{figure}
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 停牌、涨跌幅限制、特殊证券状态、可成交比例、现金校验及字段缺失分别如何映射到状态，依赖研究时期、交易制度、数据供应商与团队协议。状态未知不得被默认解释为可成交，也不得反向改写目标组合。
+\end{confirmbox}
+
+\section{成交价格代理}
+
+日频教学回测必须选择配置化的成交价格代理，并让买卖遵守同一、可解释的时间规则。开盘价、某段 VWAP、收盘价或其他代理各自对应不同假设，没有一种天然正确。尤其不能在事后从当日价格中选择对历史订单最有利的值，也不能在代理缺失时静默填入前收盘。
+
+复权价格适合构造某些收益序列，却不一定能够直接模拟现金成交。执行价格、持仓估值价格与收益计算价格应分别命名并说明公司行动如何进入；否则拆股、分红或复权可能同时改变数量、价格和现金，产生重复计算。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 最终价格代理、时间戳、复权或不复权口径、买卖两侧规则、缺失处理、估值价格和与第 \cref{ch:universe-labels} 标签端点的一致性，都必须在运行前冻结。无法核验历史代理时，应返回限制状态，不应制造成交价。
+\end{confirmbox}
+
+\section{完全成交、部分成交与未成交}
+
+对非负请求数量 \(q^{\mathrm{request}}\)，成交数量 \(q^{\mathrm{fill}}\) 应满足 \(0\le q^{\mathrm{fill}}\le q^{\mathrm{request}}\)。未成交量与成交比例定义为
+
+\begin{align}
+  q^{\mathrm{unfilled}}_{i,t}
+  &=q^{\mathrm{request}}_{i,t}-q^{\mathrm{fill}}_{i,t},\\
+  \mathrm{FillRatio}_{i,t}
+  &=\frac{q^{\mathrm{fill}}_{i,t}}{q^{\mathrm{request}}_{i,t}},
+  \qquad q^{\mathrm{request}}_{i,t}>0.
+  \label{eq:ch10-fill-ratio}
+\end{align}
+
+完全成交、部分成交和未成交分别对应成交比例 1、严格介于 0 与 1、以及 0。买入失败保留现金，卖出失败保留旧证券，部分成交则同时保留成交量与未成交量。订单是否次日继续有效必须由配置决定；若允许延续，也要生成新的状态事件，不能在后续日期悄悄用更有利的价格补成交。
+
+成交表至少保存 \texttt{fill\_id}、\texttt{order\_id}、\texttt{security\_id}、\texttt{execution\_date}、\texttt{side}、\texttt{requested\_quantity}、\texttt{filled\_quantity}、\texttt{unfilled\_quantity}、\texttt{fill\_ratio}、\texttt{execution\_price}、\texttt{gross\_trade\_value}、\texttt{fill\_status}、\texttt{unfilled\_reason} 和 \texttt{execution\_version}。其中 \texttt{gross\_trade\_value} 保存绝对金额，另用带符号字段支持现金计算。
+
+\section{实际持仓更新}
+
+令 \(q^{\mathrm{pre}}_{i,t}\) 为成交前证券数量，方向变量 \(s_i=+1\) 表示买入、\(s_i=-1\) 表示卖出，则带符号成交数量与成交后持仓为
+
+\begin{align}
+  \Delta q^{\mathrm{fill}}_{i,t}
+  &=s_i q^{\mathrm{fill}}_{i,t},\\
+  q^{\mathrm{post}}_{i,t}
+  &=q^{\mathrm{pre}}_{i,t}+\Delta q^{\mathrm{fill}}_{i,t}.
+  \label{eq:ch10-position-conservation}
+\end{align}
+
+卖出数量不得超过按当时规则可用的实际持仓；未成交卖单的 \(\Delta q^{\mathrm{fill}}=0\)，所以旧数量自然保留。证券市值和实际权重分别为
+
+\begin{equation}
+  \mathrm{MV}^{\mathrm{post}}_{i,t}
+  =q^{\mathrm{post}}_{i,t}P^{\mathrm{valuation}}_{i,t},
+  \qquad
+  w^{\mathrm{actual}}_{i,t}
+  =\frac{\mathrm{MV}^{\mathrm{post}}_{i,t}}
+  {\mathrm{NAV}^{\mathrm{post}}_t}.
+  \label{eq:ch10-actual-weight}
+\end{equation}
+
+持仓账本至少保存 \texttt{security\_id}、\texttt{date}、\texttt{quantity\_pre}、\texttt{filled\_quantity}、\texttt{quantity\_post}、\texttt{valuation\_price}、\texttt{market\_value}、\texttt{actual\_weight}、\texttt{position\_status} 和 \texttt{holding\_version}。
+
+\section{现金账本}
+
+为避免买卖方向重复取负，定义带符号成交金额
+
+\begin{equation}
+  T_{i,t}=s_i q^{\mathrm{fill}}_{i,t}P^{\mathrm{execution}}_{i,t},
+  \label{eq:ch10-signed-trade-value}
+\end{equation}
+
+其中买入为正现金流出，卖出为负现金流出。于是
+
+\begin{equation}
+  \mathrm{Cash}^{\mathrm{post}}_t
+  =\mathrm{Cash}^{\mathrm{pre}}_t
+  -\sum_i T_{i,t}
+  -\mathrm{TotalCost}_t
+  +\mathrm{CorporateCashFlow}_t.
+  \label{eq:ch10-cash-conservation}
+\end{equation}
+
+若分别报告，\texttt{buy\_cash\_flow} 为正的买入金额之和，\texttt{sell\_cash\_flow} 为卖出回款绝对额；现金更新就是期初现金减买入、加卖出、减费用、加公司现金流。现金表至少保存 \texttt{date}、\texttt{cash\_pre}、买卖现金流、佣金、税费、滑点、冲击、公司现金流、\texttt{cash\_post} 和 \texttt{cash\_status}。
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+    node distance=6mm and 9mm,
+    every node/.style={font=\small},
+    quantLedgerInput/.style={quantBlueCard, text width=3.6cm, align=center},
+    quantLedgerProcess/.style={quantCard, text width=4.3cm, align=center},
+    quantLedgerOutput/.style={quantGreenCard, text width=3.6cm, align=center},
+    quantLedgerCost/.style={quantOrangeCard, text width=3.6cm, align=center}
+  ]
+    \node[quantLedgerInput] (positionpre) {成交前证券数量};
+    \node[quantLedgerProcess, right=of positionpre] (fill) {带符号实际成交数量};
+    \node[quantLedgerOutput, right=of fill] (positionpost) {成交后证券数量与市值};
+    \node[quantLedgerInput, below=of positionpre] (cashpre) {期初现金};
+    \node[quantLedgerCost, right=of cashpre] (cashflow) {买入、卖出、费用\\与公司现金流};
+    \node[quantLedgerOutput, right=of cashflow] (cashpost) {期末现金};
+    \node[quantBlueCard, text width=4.2cm, align=center, below=8mm of cashflow] (nav) {证券市值 + 现金 = 组合净值};
+
+    \draw[quantArrow] (positionpre) -- (fill);
+    \draw[quantArrow] (fill) -- (positionpost);
+    \draw[quantArrow] (cashpre) -- (cashflow);
+    \draw[quantArrow] (cashflow) -- (cashpost);
+    \draw[quantSoftArrow] (positionpost) |- (nav);
+    \draw[quantSoftArrow] (cashpost) |- (nav);
+  \end{tikzpicture}
+  \caption{证券持仓与现金账本的守恒关系（结构示意）}
+  \label{fig:ch10-ledgers}
+\end{figure}
+
+\section{公司行动、停牌和退市}
+
+公司行动应先判断影响证券数量、估值价格还是现金，再按唯一口径入账。现金分红通常进入公司现金流；送转、拆并股通常同时调整数量与参考价格；配股等复杂事件还涉及权利、现金和选择规则。若数据源的收益或复权价格已经吸收某项公司行动，账本就不能再次记同一现金流或数量变化。
+
+停牌证券不会从持仓中自动消失。无法卖出时，其数量继续存在，实际权重还可能因其他证券价格或现金变化而被动上升。退市后的最后价格、现金或其他处置依赖历史制度和数据覆盖；无法可靠恢复时，应保留证券与限制状态，而不是删除样本或假定无损退出。
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 分红到账时点、送转与拆并股处理、配股权利、长期停牌估值、退市最后价格或现金处置，以及数据源复权与账本调整的分工，均需按历史制度和数据版本核验。无法确认时应返回 \texttt{UNKNOWN\_CORPORATE\_ACTION} 或相应限制状态。
+\end{confirmbox}
+
+\section{显性费用}
+
+显性费用包括佣金、税费和其他经确认的交易收费。买卖方向可能不对称，历史费率可能变化，还可能存在最低费用或按笔规则。因此费用函数至少需要成交日、方向、实际成交金额和费用配置版本；不得把未经核验的固定费率写成整个历史的事实。
+
+\section{滑点与冲击成本}
+
+滑点描述模型成交价相对基准代理的不利偏离，教学形式可写为
+
+\begin{equation}
+  \mathrm{SlippageCost}_{i,t}
+  =\left|T_{i,t}\right|\,\mathrm{slippage\_rate}_{i,t}.
+  \label{eq:ch10-slippage}
+\end{equation}
+
+冲击成本反映订单规模相对流动性的压力，可使用透明代理
+
+\begin{equation}
+  \mathrm{ImpactCost}_{i,t}
+  =\left|T_{i,t}\right|
+  \operatorname{impact\_function}
+  \left(\mathrm{participation\_rate}_{i,t},
+  \mathrm{liquidity}_{i,t}\right).
+  \label{eq:ch10-impact}
+\end{equation}
+
+简单函数只是教学假设，不代表真实执行。第 6 章的成本代理用于单因子可交易性诊断，本章成本模型则作用于订单和实际成交；两者不能共用同一个“成本”字段冒充同一层结果。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{回测成本分类与计费基础}
+  \label{tab:ch10-cost-classes}
+  \begin{tabularx}{\textwidth}{p{2.5cm} p{3.8cm} p{3.5cm} Y}
+    \toprule
+    类别 & 直觉 & 教学计费基础 & 关键边界 \\
+    \midrule
+    佣金与明确费用 & 实际成交产生的显性收费 & 实际成交金额、方向、笔数 & 历史费率与最低费用需确认 \\
+    税费 & 依制度和方向产生的费用 & 实际成交金额与方向 & 适用时期和证券范围需确认 \\
+    滑点 & 成交相对代理的不利偏离 & 实际成交绝对金额乘配置率 & 不对未成交部分计费 \\
+    冲击 & 交易规模对价格的压力 & 参与率和历史流动性函数 & 简化函数不等于真实执行 \\
+    诊断代理 & 第 6 章的粗粒度敏感性 & 因子或分组换手代理 & 不得冒充本章正式成本 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+总成本为
+
+\begin{equation}
+  \mathrm{TotalCost}_t
+  =\mathrm{Commission}_t+\mathrm{Tax}_t
+  +\mathrm{Slippage}_t+\mathrm{Impact}_t.
+  \label{eq:ch10-total-cost}
+\end{equation}
+
+\section{毛收益、费用与净收益}
+
+收益区间、估值时点和期初净值必须明确。设持有区间内证券盈亏、现金收益和公司行动盈亏分别为 \(\mathrm{SecurityPnL}_t\)、\(\mathrm{CashPnL}_t\) 和 \(\mathrm{CorporateActionPnL}_t\)，则
+
+\begin{align}
+  R^{\mathrm{gross}}_t
+  &=\frac{\mathrm{SecurityPnL}_t+\mathrm{CashPnL}_t
+  +\mathrm{CorporateActionPnL}_t}
+  {\mathrm{NAV}^{\mathrm{pre}}_t},
+  \label{eq:ch10-gross-return}\\
+  R^{\mathrm{net}}_t
+  &=R^{\mathrm{gross}}_t
+  -\frac{\mathrm{TotalCost}_t}{\mathrm{NAV}^{\mathrm{pre}}_t}.
+  \label{eq:ch10-net-return}
+\end{align}
+
+证券盈亏必须来自实际模拟持仓；现金也应按冻结现金收益口径进入组合。组合、现金和基准收益序列要使用一致的区间边界，并分别保存毛、费用和净结果。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{毛收益、成本与净收益分解结构}
+  \label{tab:ch10-return-decomposition}
+  \begin{tabularx}{\textwidth}{p{3.1cm} p{5.0cm} Y}
+    \toprule
+    分解项 & 计算来源 & 必须核对 \\
+    \midrule
+    证券盈亏 & 期初实际数量、价格变化和期间成交 & 不使用目标权重替代实际数量 \\
+    现金收益 & 期间实际现金与冻结现金收益规则 & 未成交买单留下的现金仍参与 \\
+    公司行动盈亏 & 唯一口径的数量、估值或现金事件 & 不与复权价格重复 \\
+    毛收益 & 上述三项除以同一份期初净值 & 估值区间和分母一致 \\
+    总成本 & 只基于实际成交的四类成本 & 未成交量不计费用 \\
+    净收益 & 毛收益减成本占期初净值比例 & 与净值变化和现金账本相符 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{目标权重与实际权重偏差}
+
+目标与实际偏差定义为
+
+\begin{equation}
+  \mathrm{tracking\_gap}_{i,t}
+  =w^{\mathrm{actual}}_{i,t}-w^{\mathrm{target}}_{i,t}.
+  \label{eq:ch10-tracking-gap}
+\end{equation}
+
+偏差是执行结果，不是回头修改目标的理由。除个股偏差外，还应聚合行业偏差、现金偏差和组合绝对偏差，并把来源归为未成交、部分成交、旧持仓无法退出、数量取整、流动性、费用或估值变化。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{目标与实际偏差诊断模板}
+  \label{tab:ch10-gap-template}
+  \begin{tabularx}{\textwidth}{p{2.6cm} p{2.2cm} p{2.2cm} p{2.2cm} Y}
+    \toprule
+    对象 & 目标权重 & 实际权重 & 偏差 & 主要原因/证据键 \\
+    \midrule
+    证券或行业 & -- & -- & -- & 未成交、部分成交或旧持仓延续 \\
+    现金 & -- & -- & -- & 买入失败、数量取整或费用 \\
+    组合绝对偏差 & -- & -- & \(\sum_i|\mathrm{gap}_{i,t}|\) & 分证券原因汇总 \\
+    最大个股偏差 & -- & -- & -- & 对应 \texttt{order\_id}/\texttt{fill\_id} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{组合换手与实际成交换手}
+
+“换手”在四个阶段具有不同分母和用途，不能共用同一字段名。实际单边成交换手可以定义为
+
+\begin{equation}
+  \mathrm{RealizedTurnover}_t
+  =\frac{1}{2}\sum_i
+  \left|\mathrm{filled\_trade\_weight}_{i,t}\right|,
+  \label{eq:ch10-realized-turnover}
+\end{equation}
+
+也可以使用实际成交绝对金额除以明确净值分母的口径。选择哪一种必须预先冻结。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{四类换手指标的层次与用途}
+  \label{tab:ch10-turnover-levels}
+  \begin{tabularx}{\textwidth}{p{3.0cm} p{3.6cm} p{3.2cm} Y}
+    \toprule
+    指标 & 来源 & 回答的问题 & 建议字段 \\
+    \midrule
+    因子换手 & 第 6 章分数或排名变化 & 信号本身是否频繁变化 & \texttt{factor\_turnover} \\
+    目标换手 & 第 9 章目标减上期实际权重 & 希望交易多少 & \texttt{target\_turnover} \\
+    订单换手 & 取整和合法性处理后的订单 & 实际请求多少 & \texttt{order\_turnover} \\
+    实际成交换手 & 本章实际成交金额或权重 & 真正执行多少 & \texttt{realized\_turnover} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{基准、超额收益与跟踪误差}
+
+基准收益必须来自点时可用、版本化且与组合收益区间一致的序列。净超额收益为 \(a_t=R^{\mathrm{net}}_{p,t}-R_{b,t}\)。若每年对应的观察期数为 \(K\)，跟踪误差与信息比率可写为
+
+\begin{equation}
+  \mathrm{TE}=\sqrt{K}\,\operatorname{Std}(a_t),
+  \qquad
+  \mathrm{IR}=\frac{K\,\operatorname{Mean}(a_t)}{\mathrm{TE}}.
+  \label{eq:ch10-te-ir}
+\end{equation}
+
+\begin{confirmbox}
+\textbf{[需实际确认]} 基准身份、基准收益口径、现金收益、无风险利率、观察频率与年化因子 \(K\)、费用是否进入相对收益，以及缺失基准日期的处理均需冻结。不能用今天的基准成分或事后修订序列替代历史版本。
+\end{confirmbox}
+
+\section{基础绩效指标}
+
+设净收益序列为 \(R_t\)，净值为 \(V_t=V_0\prod_{s\le t}(1+R_s)\)。累计收益为 \(V_T/V_0-1\)；年化收益可按 \((V_T/V_0)^{K/n}-1\) 计算；年化波动为 \(\sqrt{K}\operatorname{Std}(R_t)\)。最大回撤基于净值相对历史峰值的最低比例，Sharpe 比率则使用明确的无风险收益和同一频率序列。所有指标都应同时报告毛结果和净结果。
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{基础绩效与执行指标模板}
+  \label{tab:ch10-performance-metrics}
+  \begin{tabularx}{\textwidth}{p{2.7cm} p{4.5cm} p{3.4cm} Y}
+    \toprule
+    指标 & 定义或直觉 & 必须并列报告 & 关键限制 \\
+    \midrule
+    累计/年化收益 & 净值增长及其频率缩放 & 毛、净、基准、超额 & 年化因子与区间需确认 \\
+    年化波动 & 期间收益标准差乘 \(\sqrt K\) & 毛与净 & 频率和缺失期处理一致 \\
+    最大回撤 & 净值相对历史峰值的最大下跌 & 毛净值与净净值 & 必须基于完整净值序列 \\
+    Sharpe 比率 & 超过无风险收益的波动调整均值 & 毛、净及无风险口径 & 不作为单一结论 \\
+    超额收益/跟踪误差/IR & 相对冻结基准的收益与波动 & 毛超额与净超额 & 基准和区间一致 \\
+    胜率 & 正收益期或正超额期占比 & 明确胜负定义 & 不替代尾部风险 \\
+    换手与成本 & 实际成交压力及费用侵蚀 & 目标、订单、成交三层 & 字段和分母不同 \\
+    成本占毛收益比例 & 成本相对毛收益的规模 & 成本绝对额同时报告 & 毛收益非正时谨慎解释 \\
+    现金比例 & 实际现金占组合净值 & 目标与实际现金 & 现金可来自约束或失败 \\
+    未成交比例 & 未成交数量或金额占请求量 & 买卖、状态和时期分层 & 分母必须明确 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+指标表不应只剩一条累计曲线。成本占毛收益比例在毛收益为零或负时可能失去直觉，应同时报告成本绝对额和占净值比例；胜率也要说明是组合正收益期还是正超额期。
+
+\section{收益来源和失败模式解释}
+
+最终解释应沿同一框架连接前面各章的证据，而不是把净收益好坏当作唯一判断。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{回测结果的八维解释框架}
+  \label{tab:ch10-interpretation-framework}
+  \begin{tabularx}{\textwidth}{p{2.2cm} p{5.2cm} Y}
+    \toprule
+    维度 & 核心问题 & 最小证据 \\
+    \midrule
+    预测力 & 第 6---8 章证据是否传递到实际组合 & 综合分、目标、实际持仓的分层联系 \\
+    风险 & 是否集中于行业、个股、规模、流动性或波动 & 暴露、集中度、回撤日期和持仓 \\
+    换手 & 因子、目标、订单和实际成交为何不同 & 四类换手与状态分解 \\
+    成本 & 显性费用、滑点和冲击如何侵蚀毛结果 & 毛收益、各成本项和净收益 \\
+    可交易性 & 目标在多大程度上被实现 & 未成交、部分成交、现金和偏差 \\
+    失败模式 & 哪些日期、状态、行业或证券造成异常 & 原因码、订单、成交和持仓穿行 \\
+    适用边界 & 结论在哪些冻结条件下才有意义 & 样本、数据、基准、容量与制度边界 \\
+    不确定性 & 哪些执行、费用或公司行动口径未确认 & 配置版本、未知状态和限制清单 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+收益来源解释至少要核对：高分证券是否真的进入实际持仓；约束是否削弱信号；收益是否由少数行业或证券集中贡献；成本是否集中在高换手日期；未成交是否系统性发生在某一侧；以及回撤是否伴随暴露、流动性或执行异常。观察到的事实、基于事实的推断、仍需验证的假设和建议必须分开写。
+
+\section{一个匿名教学案例}
+
+\begin{casebox}
+\textbf{仅用于解释订单、成交、持仓、现金与费用账本，不代表真实证券、真实数据库、真实投资组合或实证研究结果。}
+
+假设冻结净值为 100,000 个货币单位，成交前现金为 67,000。五只匿名证券的估值价格与成交代理在本例中暂设相同，只为缩短算术；数量单位和费用数字均为虚构教学值。第 9 章目标权重保持不变。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c r r r r r}
+  \toprule
+  证券 & 期初数量 & 价格 & 期初权重 & 目标权重 & 期望名义金额 \\
+  \midrule
+  A & 100 & 100 & 0.10 & 0.15 & +5,000 \\
+  B & 200 & 50  & 0.10 & 0.15 & +5,000 \\
+  C & 0   & 20  & 0.00 & 0.05 & +5,000 \\
+  D & 300 & 30  & 0.09 & 0.06 & -3,000 \\
+  E & 400 & 10  & 0.04 & 0.02 & -2,000 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+订单 A 请求买 50 股并完全成交；B 请求买 100 股，只成交 40 股；C 请求买 250 股但未成交；D 请求卖 100 股但未成交；E 请求卖 200 股并完全成交。于是 A、B、E 的带符号成交数量分别为 \((+50,+40,-200)\)，C、D 为 0。B 仍有 60 股未成交，D 的 300 股旧持仓全部延续。
+
+\begin{center}
+\footnotesize
+\begin{tabular}{c r r r l}
+  \toprule
+  证券 & 请求数量 & 成交数量 & 未成交数量 & 状态与账本后果 \\
+  \midrule
+  A & 50 & 50 & 0 & 完全买入，现金减少 5,000 \\
+  B & 100 & 40 & 60 & 部分买入，现金只减少 2,000 \\
+  C & 250 & 0 & 250 & 买入失败，5,000 仍留现金 \\
+  D & 100 & 0 & 100 & 卖出失败，旧持仓不减少 \\
+  E & 200 & 200 & 0 & 完全卖出，现金增加 2,000 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+假设本次对实际成交合计收取显性费用 6、滑点 4、冲击 2，总成本为 12，公司现金流为 0。期末现金为
+\[
+67{,}000-7{,}000+2{,}000-12=61{,}988.
+\]
+成交后证券市值为 A 15,000、B 12,000、C 0、D 9,000、E 2,000，合计 38,000；证券与现金合计 99,988，正好等于期初净值减本次费用。目标与实际的主要偏差为：B 少买约 3 个百分点，C 少买约 5 个百分点，D 因卖出失败多持约 3 个百分点，实际现金比目标现金高约 5 个百分点。精确权重使用扣费后的净值计算，不能用目标权重覆盖。
+\end{casebox}
+
+这个案例同时证明三件事：成本只对 A、B、E 的实际成交计提；C 的买入失败留下现金；D 的卖出失败留下证券。任何把 B 按 100 股、C 按 250 股或 D 按卖出 100 股更新持仓的实现，都会破坏数量或现金守恒。
+
+\section{pandas 风格最小实现}
+
+\cref{lst:ch10-cost-aware-backtest} 强调事件顺序和审计输出。辅助函数代表需要由配置实现的规则，不是假定存在的供应商接口。
+
+\begin{lstlisting}[
+  caption={含成本事件驱动回测的最小接口},
+  label={lst:ch10-cost-aware-backtest}
+]
+def run_cost_aware_backtest(
+    frozen_portfolios,
+    execution_calendar,
+    execution_state,
+    price_proxy,
+    corporate_actions,
+    cost_config,
+    backtest_config,
+):
+    assert frozen_portfolios["portfolio_version"].notna().all()
+    assert frozen_portfolios["portfolio_frozen"].all()
+    assert_versioned(cost_config, backtest_config)
+
+    targets = frozen_portfolios.sort_values(
+        ["signal_date", "execution_date", "security_id"]
+    ).copy(deep=True)
+    frozen_digest = stable_digest(targets)
+    assert (targets["execution_date"] > targets["signal_date"]).all()
+    assert_unique(targets, [
+        "portfolio_version", "signal_date", "security_id"
+    ])
+
+    holdings = initial_holdings(backtest_config)
+    cash = initial_cash(backtest_config)
+    orders, fills = [], []
+    holding_ledger, cash_ledger, returns = [], [], []
+
+    for (signal_date, execution_date), target in targets.groupby(
+        ["signal_date", "execution_date"], sort=True
+    ):
+        nav_frozen = value_portfolio(
+            holdings, cash, asof=signal_date,
+            price=backtest_config.signal_valuation_price,
+        )
+        batch = build_orders_from_desired_weight(
+            target=target,
+            nav=nav_frozen,
+            lot_rule=backtest_config.lot_rule,
+            link_version="portfolio_version",
+        )
+        orders.extend(batch)
+
+        # Only execution-date state may decide fills.
+        state_now = execution_state_at(
+            execution_state, date=execution_date
+        )
+        price_now = price_proxy_at(
+            price_proxy, date=execution_date,
+            method=backtest_config.execution_price_proxy,
+        )
+        batch_fills = simulate_fills_with_status(
+            batch, state_now, price_now,
+            available_cash=cash,
+            execution_config=backtest_config.execution,
+        )
+        assert_fill_conservation(batch, batch_fills)
+        fills.extend(batch_fills)
+
+        # Costs use filled quantity only; unfilled orders remain evidence.
+        costs = calculate_costs_on_fills_only(
+            batch_fills, cost_config
+        )
+        holdings_pre, cash_pre = holdings.copy(), cash
+        holdings_post_trade = update_quantities_from_fills(
+            holdings_pre, batch_fills
+        )
+        cash_post_trade = update_cash_from_fills(
+            cash_pre, batch_fills, costs
+        )
+        assert_security_ledger_conserves(
+            holdings_pre, batch_fills, holdings_post_trade
+        )
+        assert_cash_ledger_conserves(
+            cash_pre, batch_fills, costs, cash_post_trade
+        )
+
+        actual_at_entry = value_actual_holdings(
+            holdings_post_trade, cash_post_trade,
+            date=execution_date,
+            price=backtest_config.valuation_price,
+        )
+        save_tracking_gap(
+            target_weight=target["target_weight"],
+            actual_weight=actual_at_entry["actual_weight"],
+        )
+
+        interval = execution_calendar.holding_interval(
+            execution_date
+        )
+        actions = corporate_actions_in_interval(
+            corporate_actions,
+            interval=interval,
+            prevent_double_adjustment=True,
+        )
+        period = advance_actual_state_in_time_order(
+            holdings=holdings_post_trade,
+            cash=cash_post_trade,
+            interval=interval,
+            corporate_actions=actions,
+            valuation_price=backtest_config.valuation_price,
+        )
+        assert_period_ledgers_conserve(period)
+        holding_ledger.extend(make_holding_rows(
+            holdings_pre, batch_fills, actual_at_entry,
+            period.action_events,
+        ))
+        cash_ledger.extend(make_cash_rows(
+            cash_pre, batch_fills, costs,
+            period.action_events, period.ending_cash,
+        ))
+        returns.append(decompose_interval_return(
+            period=period,
+            costs_paid=costs,
+            cost_already_deducted_from_cash=True,
+            output=["gross_return", "total_cost", "net_return"],
+        ))
+        holdings, cash = period.ending_holdings, period.ending_cash
+
+    assert stable_digest(targets) == frozen_digest
+    assert_no_future_execution_inputs(
+        orders, fills, execution_calendar
+    )
+    return audit_bundle(
+        orders=orders,
+        fills=fills,
+        holdings=holding_ledger,
+        cash=cash_ledger,
+        returns=returns,
+        target_turnover=targets["target_turnover"],
+        realized_turnover=turnover_from_fills(fills),
+        versions=collect_all_versions(
+            frozen_portfolios, cost_config, backtest_config
+        ),
+    )
+\end{lstlisting}
+
+相同输入、日历、状态、价格、公司行动和配置应得到相同订单、成交、持仓、现金与收益。代码中的 \texttt{cost\_already\_deducted\_from\_cash} 明确要求收益分解只核对同一笔费用，不能再次扣除。公司行动按持有区间内的事件时间顺序推进，不允许提前到成交日。代码不根据历史净收益修改任何已冻结配置，也不把失败运行清除；失败状态和已生成订单仍属于审计证据。
+
+\section{自动测试与人工核对}
+
+自动测试至少覆盖：
+
+\begin{enumerate}
+  \item 非冻结 \texttt{portfolio\_version} 不能运行；
+  \item \texttt{execution\_date} 必须严格晚于 \texttt{signal\_date}；
+  \item 订单不能跨证券或跨调仓日连接；
+  \item 成交失败不能改变冻结目标权重；
+  \item 买入未成交时现金不减少；
+  \item 卖出未成交时旧持仓数量不减少；
+  \item 部分成交满足请求量等于成交量加未成交量；
+  \item 费用只对实际成交计算；
+  \item 买卖方向、成交数量和现金符号一致；
+  \item 现金账本逐期守恒；
+  \item 证券数量账本逐证券守恒；
+  \item 实际权重来自成交后持仓与估值；
+  \item 收益基于实际持仓而非目标权重；
+  \item 公司行动不会与复权价格重复计入；
+  \item 停牌证券不会从持仓中消失；
+  \item 退市和未知状态返回明确状态；
+  \item 毛收益减成本占净值比例等于净收益；
+  \item 因子、目标、订单和实际换手字段彼此不同；
+  \item 目标---实际偏差可以由两份权重还原；
+  \item 成本配置版本可追溯；
+  \item 不得使用未来成交量、未来价格或未来状态；
+  \item 失败运行仍保留订单和状态证据；
+  \item 相同输入和配置生成一致结果；
+  \item 回测函数不得修改第 4---9 章的冻结文件、版本或内存快照。
+\end{enumerate}
+
+\begin{practicebox}
+\textbf{[正确实践]} 人工至少穿行一个完全成交、一个部分成交、一个买入失败、一个卖出失败、一个公司行动和一个未知状态案例。逐项重算请求量、成交量、未成交量、证券数量、买卖现金流、费用、期末现金、实际权重、目标偏差、毛收益和净收益，并用 \texttt{order\_id}、\texttt{fill\_id} 与全部版本还原证据链。
+\end{practicebox}
+
+\section{常见错误}
+
+\begin{warningbox}
+常见错误包括：使用信号日收盘数据又假定同一收盘成交；把目标持仓当作实际持仓；把未成交订单当成成交；卖出失败时让旧持仓消失；买入失败时仍扣现金；部分成交却按全额订单更新持仓；按目标交易而非实际成交计费；买卖费用方向取反；公司行动与复权重复；用复权价格直接更新现金却不解释；用未来成交量、价格或状态改善历史订单；停牌证券的收益、估值与权重处理不一致；静默删除退市样本；只展示累计净值；只报告毛收益或只报告净收益；根据回测返回修改因子、权重、持股数或约束；以及把历史表现写成未来保证。
+\end{warningbox}
+
+这些错误有的破坏时间边界，有的破坏数量或现金守恒，有的掩盖收益来源。修复时应定位最早受污染的订单或账本事件，重放后续状态并比较差异，不能只手工调整最终净值序列。
+
+\section{最终研究结论如何写}
+
+最终报告先列观察事实，例如冻结样本内的覆盖、毛净结果、暴露、换手、成本、未成交和现金；再写基于事实的推断，例如预测信息是否被约束与执行保留；随后列仍需验证的执行、制度和数据假设；最后给出下一步建议与明确限制。失败日期和负面结果必须保留。
+
+结论只允许以下四类：\keyterm{当前证据支持继续研究}、\keyterm{当前证据带条件支持}、\keyterm{当前证据不支持}、\keyterm{当前证据不足}。它们描述当前冻结研究设计下的证据，不是未来收益承诺。任何建议都应同时引用预测力、风险、换手、成本和可交易性，而不能只引用累计收益或 Sharpe 比率。
+
+\section{本章产出}
+
+\begin{outputbox}
+本章应提交：冻结回测与成本配置；信号到收益的事件时序；订单、成交、证券持仓和现金四类追加式账本；公司行动与状态记录；毛收益、费用、净收益、现金和基准序列；目标与实际偏差；四类换手；绩效与八维解释报告；自动测试、人工穿行和失败证据；以及一个可从版本化输入完整重放的 \texttt{backtest\_version}。
+\end{outputbox}
+
+\begingroup
+\small
+\begin{longtable}{@{}p{3.4cm}p{5.4cm}p{5.9cm}@{}}
+\caption{第 10 章统一输出 schema}\label{tab:ch10-output-schema}\\
+\toprule
+对象/字段 & 核心内容 & 审计要求 \\
+\midrule
+\endfirsthead
+\toprule
+对象/字段 & 核心内容 & 审计要求 \\
+\midrule
+\endhead
+运行身份 & \texttt{backtest\_version}、\texttt{portfolio\_version}、点时数据、成本和执行版本 & 任一配置变化产生新版本，历史输出不可覆盖 \\
+订单主键与时间 & \texttt{order\_id}、证券、信号日、成交日、方向 & 不跨证券或调仓日连接，成交日晚于信号日 \\
+订单请求 & 期望权重、名义金额、数量、状态、原因、\texttt{order\_version} & 与冻结目标和净值可相互还原 \\
+成交身份 & \texttt{fill\_id}、\texttt{order\_id}、证券、成交日、\texttt{execution\_version} & 未成交订单同样保留记录 \\
+成交数量与价格 & 请求、成交、未成交量、比例、执行价、成交绝对金额 & 数量守恒，价格代理和状态可追溯 \\
+成交状态 & 完全、部分、未成交、未知或无效及原因 & 不回写信号、候选或目标 \\
+证券账本 & 前数量、带符号成交量、后数量、估值价、市值、实际权重与状态 & 逐证券逐期数量守恒 \\
+现金账本 & 前现金、买卖流、四类成本、公司现金流、后现金与状态 & 逐期现金守恒，成本只基于成交 \\
+收益序列 & 证券、现金、公司行动盈亏；毛收益、成本、净收益 & 只基于实际持仓，分母和区间一致 \\
+基准与相对结果 & 基准、超额收益、跟踪误差和信息比率 & 基准版本与年化口径可追溯 \\
+执行诊断 & 四类换手、未成交比例、现金比例、目标---实际偏差 & 字段分层，原因可关联订单和成交 \\
+研究结论 & 八维证据、失败模式、适用边界、不确定性与四类结论 & 事实、推断、假设、建议和限制分开 \\
+\bottomrule
+\end{longtable}
+\endgroup
+
+\section{章节自测}
+
+\begin{quizbox}
+\begin{enumerate}
+  \item 为什么目标组合不能直接作为回测收益的持仓权重？
+  \item 哪些成交日状态可以在 \(\tau(t)\) 读取，又禁止回写哪些信号日对象？
+  \item 买入未成交和卖出未成交分别如何影响证券与现金账本？
+  \item 如何证明部分成交的请求量、成交量和未成交量守恒？
+  \item \cref{eq:ch10-cash-conservation} 如何避免买卖方向重复取负？
+  \item 为什么公司行动不能同时进入复权价格和现金或数量账本？
+  \item 因子换手、目标换手、订单换手和实际成交换手分别回答什么问题？
+  \item 目标---实际偏差为何是执行诊断，而不是修改目标的依据？
+  \item 哪些基础绩效指标必须同时报告毛结果和净结果？
+  \item 如何用八维框架把“结果不好”拆成预测、风险、成本或执行问题？
+  \item 最终研究结论允许哪四类，为什么它们都不是未来收益保证？
+  \item 任取一次调仓，应使用哪些版本和主键完整重放订单、成交、持仓、现金与收益？
+\end{enumerate}
+\end{quizbox}
+
+\section{主体课程总结与附录衔接}
+
+第 2---10 章已经形成主体研究闭环：先冻结点时数据和股票池，再构造、预处理和检验因子；随后完成稳健性、冗余与增量判断，把综合分转为约束目标；最后通过本章的订单、成交、持仓、现金和成本账本得到实际结果。闭环的价值不在于保证正收益，而在于任何结论都能沿时间、版本和主键回到原始证据。
+
+后续第 1 章将补齐研究问题与可证伪假设，导读负责建立阅读地图；附录则集中放置术语、检查清单、研究模板、生产化概览和 AI 使用记录。生产监控、上线审批、模型生命周期、复杂执行和容量方法只在附录建立概念认识，不改变本章已经冻结的教学回测结果。
